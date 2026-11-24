@@ -1,0 +1,18 @@
+VIDALIA DEMO ANALYZER 1.4.2
+Triagem de demos de Counter-Strike 1.6 (GoldSrc) em busca de sinais de trapaca.
+
+COMO USAR (Windows 10/11)
+- Com o executavel: abra VidaliaDemoAnalyzer.exe.
+- Pelo codigo-fonte: instale o Python 3.10+ (python.org, marque "Add python.exe to PATH")
+  e de dois cliques em Iniciar.bat.
+Escolha uma demo (.dem) ou uma pasta de demos e, opcionalmente, a pasta cstrike\maps
+(necessaria para a analise de wallhack). Clique em Analisar.
+
+IMPORTANTE: o resultado e uma TRIAGEM e nao prova uso de trapaca. Assista a demo
+nos momentos indicados antes de qualquer decisao.
+
+Documentacao completa: README.md
+Como interpretar e conferir os alertas: GUIA_ADMINISTRADORES.md
+Historico de versoes: CHANGELOG.md
+Gerar o executavel: Gerar_EXE.bat  -> dist\VidaliaDemoAnalyzer.exe
+Licenca: MIT (LICENSE)
