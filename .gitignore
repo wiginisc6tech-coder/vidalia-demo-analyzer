@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+*.dem
+*_vidalia.html
+*_vidalia.json
+*_vidalia_evidencias.csv
+vidalia_resumo.*
