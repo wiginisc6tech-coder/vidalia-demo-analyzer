@@ -61,6 +61,24 @@ class BSP:
         return True
 
 
+def default_map_folders(demo_path=None):
+    """Pastas onde o mapa costuma estar quando o usuario nao informa: ao lado da demo (demos ficam
+    normalmente na pasta cstrike) e as instalacoes padrao do CS 1.6 (Steam e nao-Steam) no Windows."""
+    out = []
+    if demo_path:
+        d = os.path.dirname(os.path.abspath(demo_path))
+        out += [d, os.path.dirname(d)]
+    for root in (os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramFiles"), "C:\\Program Files (x86)",
+                 "C:\\Program Files", "C:\\Games", "D:\\Games", "D:\\SteamLibrary", "E:\\SteamLibrary"):
+        if not root:
+            continue
+        out += [os.path.join(root, "Steam", "steamapps", "common", "Half-Life", "cstrike"),
+                os.path.join(root, "steamapps", "common", "Half-Life", "cstrike"),
+                os.path.join(root, "Counter-Strike 1.6", "cstrike"),
+                os.path.join(root, "Counter-Strike", "cstrike")]
+    return out
+
+
 def find_bsp(map_name, folders):
     for folder in folders:
         if not folder:

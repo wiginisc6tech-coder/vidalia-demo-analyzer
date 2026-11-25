@@ -30,6 +30,8 @@ class Timeline:
         self.weapon = []
         self.health = []
         self.outseq = []
+        self.fwd = []       # forwardmove do usercmd
+        self.side = []      # sidemove do usercmd (negativo = esquerda)
         self.srvtime = []
         self.players = []   # dict num -> origin (compartilhado entre frames sem mudanca)
 
@@ -78,6 +80,10 @@ def angles_to(src, dst):
     return pitch, yaw, math.sqrt(dx * dx + dy * dy + dz * dz)
 
 
+# Fracao da barra de progresso dedicada a leitura da demo (o restante vai para os detectores).
+LOAD_SHARE = 0.6
+
+
 def load(path, progress=None):
     dd = DemoData()
     warnings = dd.warnings
@@ -93,10 +99,12 @@ def load(path, progress=None):
     total = max(1, hdr.file_size)
     n = 0
     playback_started = False
-    for fr in iter_frames(path, hdr, warnings):
+    pos = [0]
+    for fr in iter_frames(path, hdr, warnings, pos):
         n += 1
-        if progress and n % 5000 == 0:
-            progress(min(0.99, (fr.segment + 1) / max(1, len(hdr.entries)) * 0.5 + 0.0))
+        if progress and n % 1000 == 0:
+            # leitura = 0% a LOAD_SHARE do total, proporcional aos bytes ja lidos
+            progress(min(LOAD_SHARE, pos[0] / total * LOAD_SHARE))
         if isinstance(fr, NetFrame):
             kinds["rede"] += 1
             dec.player_pos = None
@@ -123,6 +131,8 @@ def load(path, progress=None):
             tl.weapon.append(st.weapon_id)
             tl.health.append(fr.health)
             tl.outseq.append(fr.outgoing_sequence)
+            tl.fwd.append(fr.forwardmove)
+            tl.side.append(fr.sidemove)
             tl.srvtime.append(st.time)
             tl.players.append(last_players)
             attack_prev = bool(fr.buttons & IN_ATTACK)
@@ -177,7 +187,7 @@ def load(path, progress=None):
         eventos_registrados=len(st.event_names),
     )
     if progress:
-        progress(0.5)
+        progress(LOAD_SHARE)
     return dd
 
 

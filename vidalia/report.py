@@ -6,9 +6,47 @@ import json
 import os
 
 from . import __version__
-from .bsp import BSP, find_bsp
+from .bsp import BSP, default_map_folders, find_bsp
 from .detectors import LEVEL, SEM_DADOS, OK, ATENCAO, SUSPEITO, fmt_time, run_all
-from .engine import load, player_name, weapon_name
+from .engine import LOAD_SHARE, load, player_name, weapon_name
+
+
+# Confiabilidade de cada detector (quanto foi validado com demos reais) -> peso de Suspeito / Atencao.
+# A pontuacao combina os alertas como probabilidades independentes: 100 * (1 - prod(1 - p)).
+SCORE_WEIGHTS = {
+    "alta": (0.70, 0.30),    # calibrado com demos publicas, separacao clara entre limpas e cheats
+    "media": (0.50, 0.20),   # calibrado, mas com sobreposicao ou poucas amostras
+    "baixa": (0.35, 0.12),   # experimental
+}
+DETECTOR_TIER = {
+    "Speedhack": "alta", "Bunny hop script": "alta", "Triggerbot": "alta", "Silent aim": "alta",
+    "Strafe automatico": "alta", "Script de agachamento": "alta", "Assinaturas de cheat": "alta",
+    "Aimbot de 1 frame": "media", "Aimbot": "media", "Autofire": "media", "Anti-aim": "media",
+}
+
+
+def score(results):
+    """Pontuacao 0-100 combinando os detectores, com o detalhamento de cada contribuicao."""
+    keep = 1.0
+    parts = []
+    for r in results:
+        if r["status"] not in (SUSPEITO, ATENCAO):
+            continue
+        tier = next((t for k, t in DETECTOR_TIER.items() if r["detector"].startswith(k)), "baixa")
+        p = SCORE_WEIGHTS[tier][0 if r["status"] == SUSPEITO else 1]
+        keep *= 1.0 - p
+        parts.append(dict(detector=r["detector"], status=r["status"], confiabilidade=tier, peso=round(p * 100)))
+    return round(100 * (1.0 - keep)), parts
+
+
+def score_label(sc):
+    if sc >= 70:
+        return "alta prioridade de revisao"
+    if sc >= 40:
+        return "vale revisar"
+    if sc > 0:
+        return "indicios fracos"
+    return "sem indicios"
 
 
 def analyze(path, maps_folder=None, cfg=None, progress=None):
@@ -16,23 +54,26 @@ def analyze(path, maps_folder=None, cfg=None, progress=None):
     bsp = None
     bsp_note = ""
     map_name = os.path.splitext(os.path.basename(dd.header.map_name))[0]
-    if maps_folder:
-        bp = find_bsp(map_name, [maps_folder])
+    auto = not maps_folder
+    folders = [maps_folder] if maps_folder else default_map_folders(path)
+    if folders:
+        bp = find_bsp(map_name, folders)
         if bp:
             try:
                 bsp = BSP(bp)
                 bsp_note = "Mapa carregado: %s" % bp
             except Exception as e:  # noqa: BLE001
                 bsp_note = "Falha ao ler %s: %s" % (bp, e)
-        else:
+        elif not auto:
             bsp_note = "%s.bsp nao encontrado em %s" % (map_name, maps_folder)
-    results, speeds = run_all(dd, cfg, bsp)
-    if progress:
-        progress(0.95)
+        else:
+            bsp_note = "%s.bsp nao encontrado automaticamente; informe a pasta cstrike/maps" % map_name
+    results, speeds = run_all(dd, cfg, bsp, progress=progress, span=(LOAD_SHARE, 0.95))
     tl = dd.timeline
     t0 = tl.t[0] if tl.t else 0.0
     worst = max((LEVEL[r["status"]] for r in results), default=-1)
     veredito = {2: SUSPEITO, 1: ATENCAO, 0: OK}.get(worst, SEM_DADOS)
+    pontuacao, pontuacao_det = score(results)
     kills = [e for e in dd.events if e["tipo"] == "morte"]
     me = dd.local
     report = dict(
@@ -55,6 +96,8 @@ def analyze(path, maps_folder=None, cfg=None, progress=None):
                       headshots=sum(1 for k in kills if k["matador"] == me and k.get("headshot")),
                       disparos=len(dd.shots)),
         veredito=veredito,
+        pontuacao=pontuacao,
+        pontuacao_detalhe=pontuacao_det,
         detectores=results,
         jogadores=[dict(indice=k, nome=v.get("nome", ""), steamid=v.get("steamid", ""), time=v.get("time", ""),
                         frags=v.get("frags"), mortes=v.get("mortes"))
@@ -149,6 +192,9 @@ def save_html(report, path):
     page = TEMPLATE.format(
         arquivo=e(report["arquivo"]), versao=e(report["versao"]), gerado=e(report["gerado_em"]),
         vcolor=COLORS[report["veredito"]], veredito=LABELS[report["veredito"]], aviso=e(report["aviso"]),
+        pontuacao=report.get("pontuacao", 0), pontuacao_txt=e(score_label(report.get("pontuacao", 0))),
+        pontuacao_det=e("Pontuacao = " + (" + ".join("%s (%s, confiabilidade %s)" % (p["detector"].split(" (")[0], p["status"], p["confiabilidade"])
+                                                    for p in report.get("pontuacao_detalhe", [])) or "nenhum alerta")),
         mapa=e(d["mapa"]), duracao=e(d["duracao"]), servidor=e(d["servidor"]), frames=d["frames_de_jogo"],
         nome=e(g["nome"]), steamid=e(g["steamid"] or "-"), time=e(g["time"] or "-"), kills=g["kills"],
         mortes=g["mortes"], hs=g["headshots"], disparos=g["disparos"], cobertura=st.get("cobertura_rede", 0),
@@ -169,7 +215,7 @@ main{{max-width:1100px;margin:0 auto;padding:24px 16px}}h1{{margin:0;font-size:2
 .sub{{color:var(--acc);font-size:13px;letter-spacing:2px}}.card{{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}}
 .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}}.k{{color:var(--mut);font-size:12px}}.v{{font-size:20px;font-weight:600}}
 .verdict{{display:flex;gap:16px;align-items:center;flex-wrap:wrap}}.big{{font-size:22px;font-weight:700;padding:6px 14px;border-radius:8px;color:#fff}}
-.warn{{color:var(--mut);font-size:13px}}.pill{{display:inline-block;min-width:84px;text-align:center;color:#fff;border-radius:999px;padding:1px 10px;font-size:12px}}
+.warn{{color:var(--mut);font-size:13px}}.score{{display:flex;align-items:baseline;gap:6px}}.sv{{font-size:30px;font-weight:700}}.pill{{display:inline-block;min-width:84px;text-align:center;color:#fff;border-radius:999px;padding:1px 10px;font-size:12px}}
 .det{{background:var(--card);border:1px solid var(--line);border-radius:10px;margin:8px 0}}.det summary{{cursor:pointer;padding:12px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}}
 .sum{{color:var(--mut);font-size:13px;flex-basis:100%}}.body{{padding:0 14px 14px}}.met{{font-size:13px;color:var(--mut)}}.note{{font-size:12px;color:var(--mut);font-style:italic}}
 table{{width:100%;border-collapse:collapse;font-size:13px}}th,td{{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}}th{{color:var(--mut);font-weight:500}}
@@ -177,7 +223,7 @@ table{{width:100%;border-collapse:collapse;font-size:13px}}th,td{{text-align:lef
 footer{{color:var(--mut);font-size:12px;margin-top:30px}}
 </style></head><body><main>
 <h1>VIDALIA</h1><div class="sub">DEMO ANALYZER · {versao}</div>
-<h2>Resultado da triagem</h2><div class="card verdict"><span class="big" style="background:{vcolor}">{veredito}</span><div><b>{arquivo}</b><div class="warn">{aviso}</div></div></div>
+<h2>Resultado da triagem</h2><div class="card verdict"><span class="big" style="background:{vcolor}">{veredito}</span><div class="score"><span class="sv">{pontuacao}</span><span class="k">/100 · {pontuacao_txt}</span></div><div><b>{arquivo}</b><div class="warn">{aviso}</div><div class="warn">{pontuacao_det}</div></div></div>
 <h2>Demo e jogador gravador</h2><div class="grid">
 <div class="card"><div class="k">Mapa</div><div class="v">{mapa}</div></div><div class="card"><div class="k">Duracao</div><div class="v">{duracao}</div></div>
 <div class="card"><div class="k">Jogador</div><div class="v">{nome}</div><div class="k">{steamid} · {time}</div></div>
@@ -194,6 +240,24 @@ footer{{color:var(--mut);font-size:12px;margin-top:30px}}
 </main></body></html>"""
 
 
+def players_summary(items):
+    """Agrupa as demos por jogador gravador (SteamID ou nome)."""
+    groups = {}
+    for _, rep in items:
+        g = rep["gravador"]
+        key = g.get("steamid") or ("nome:" + (g.get("nome") or "?"))
+        groups.setdefault(key, []).append(rep)
+    out = []
+    for key, reps in groups.items():
+        sc = [r.get("pontuacao", 0) for r in reps]
+        dets = sorted({d["detector"].split(" (")[0] for r in reps for d in r["detectores"] if d["status"] in (SUSPEITO, ATENCAO)})
+        out.append(dict(nome=reps[0]["gravador"]["nome"], steamid=reps[0]["gravador"].get("steamid", ""), demos=len(reps),
+                        max=max(sc), media=round(sum(sc) / len(sc)), alertas=sum(1 for x in sc if x >= 40),
+                        detectores=", ".join(dets)))
+    out.sort(key=lambda p: (-p["alertas"], -p["max"]))
+    return out
+
+
 def save_batch(items, base):
     """Resumo de varias demos: <base>.csv e <base>.html. Devolve o caminho do HTML."""
     e = html.escape
@@ -204,13 +268,13 @@ def save_batch(items, base):
                 names.append(r["detector"])
     with open(base + ".csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f, delimiter=";")
-        w.writerow(["demo", "jogador", "steamid", "mapa", "kills", "veredito"] + names)
+        w.writerow(["demo", "jogador", "steamid", "mapa", "kills", "veredito", "pontuacao"] + names)
         for path, rep in items:
             st = {r["detector"]: r["status"] for r in rep["detectores"]}
             g = rep["gravador"]
-            w.writerow([os.path.basename(path), g["nome"], g["steamid"], rep["demo"]["mapa"], g["kills"], rep["veredito"]]
-                       + [st.get(n, "") for n in names])
-    order = sorted(items, key=lambda it: -LEVEL[it[1]["veredito"]])
+            w.writerow([os.path.basename(path), g["nome"], g["steamid"], rep["demo"]["mapa"], g["kills"], rep["veredito"],
+                        rep.get("pontuacao", 0)] + [st.get(n, "") for n in names])
+    order = sorted(items, key=lambda it: (-it[1].get("pontuacao", 0), -LEVEL[it[1]["veredito"]]))
     rows = []
     for path, rep in order:
         st = {r["detector"]: r["status"] for r in rep["detectores"]}
@@ -218,20 +282,26 @@ def save_batch(items, base):
         rel = os.path.basename(os.path.splitext(path)[0] + "_vidalia.html")
         cells = "".join('<td><span class="pill" style="background:%s">%s</span></td>' % (COLORS[st[n]], LABELS[st[n]])
                         if n in st else "<td></td>" for n in names)
-        rows.append('<tr><td><a href="%s">%s</a></td><td>%s</td><td>%s</td><td>%d</td><td><span class="pill" style="background:%s">%s</span></td>%s</tr>'
+        rows.append('<tr><td><a href="%s">%s</a></td><td>%s</td><td>%s</td><td>%d</td><td><span class="pill" style="background:%s">%s</span></td><td><b>%d</b></td>%s</tr>'
                     % (e(rel), e(os.path.basename(path)), e(g["nome"]), e(rep["demo"]["mapa"]), g["kills"],
-                       COLORS[rep["veredito"]], LABELS[rep["veredito"]], cells))
+                       COLORS[rep["veredito"]], LABELS[rep["veredito"]], rep.get("pontuacao", 0), cells))
+    prow = "".join('<tr><td>%s</td><td>%s</td><td>%d</td><td><b>%d</b></td><td>%d</td><td>%d</td><td>%s</td></tr>'
+                   % (e(p["nome"]), e(p["steamid"] or "-"), p["demos"], p["max"], p["media"], p["alertas"], e(p["detectores"]))
+                   for p in players_summary(items))
     head = "".join("<th>%s</th>" % e(n.split(" (")[0]) for n in names)
     page = ("""<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Resumo Vidalia</title><style>body{margin:0;background:#0f172a;color:#e2e8f0;font:14px/1.5 "Segoe UI",system-ui,sans-serif}
-main{max-width:1300px;margin:0 auto;padding:24px 16px}h1{margin:0}.sub{color:#60a5fa;font-size:13px;letter-spacing:2px}
+main{max-width:1300px;margin:0 auto;padding:24px 16px}h1{margin:0}h2{font-size:17px;margin:26px 0 4px}.sub{color:#60a5fa;font-size:13px;letter-spacing:2px}
 .tw{overflow-x:auto;background:#111c33;border:1px solid #1e293b;border-radius:10px;margin-top:18px}table{width:100%%;border-collapse:collapse}
 th,td{text-align:left;padding:7px 9px;border-bottom:1px solid #1e293b;white-space:nowrap}th{color:#94a3b8;font-weight:500}
 a{color:#93c5fd}.pill{display:inline-block;color:#fff;border-radius:999px;padding:1px 9px;font-size:12px}.warn{color:#94a3b8;font-size:13px}</style></head>
 <body><main><h1>VIDALIA</h1><div class="sub">RESUMO DE %d DEMOS · %s</div>
 <p class="warn">Triagem automatizada: nao comprova trapaca. Clique no nome da demo para abrir o relatorio individual.</p>
-<div class="tw"><table><tr><th>Demo</th><th>Jogador</th><th>Mapa</th><th>Kills</th><th>Resultado</th>%s</tr>%s</table></div></main></body></html>"""
-            % (len(items), e(__version__), head, "".join(rows)))
+<h2>Por jogador</h2><p class="warn">O mesmo padrao em varias demos do mesmo jogador pesa mais que uma demo isolada.</p>
+<div class="tw"><table><tr><th>Jogador</th><th>SteamID</th><th>Demos</th><th>Pontuacao maxima</th><th>Media</th><th>Demos com 40+</th><th>Detectores que alertaram</th></tr>%s</table></div>
+<h2>Por demo</h2>
+<div class="tw"><table><tr><th>Demo</th><th>Jogador</th><th>Mapa</th><th>Kills</th><th>Resultado</th><th>Pontuacao</th>%s</tr>%s</table></div></main></body></html>"""
+            % (len(items), e(__version__), prow, head, "".join(rows)))
     with open(base + ".html", "w", encoding="utf-8") as f:
         f.write(page)
     return base + ".html"

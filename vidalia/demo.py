@@ -151,8 +151,11 @@ def read_header(path):
     return hdr
 
 
-def iter_frames(path, hdr=None, warnings=None):
-    """Gera frames (NetFrame, EventFrame, ClientDataFrame, ConsoleFrame, ...)."""
+def iter_frames(path, hdr=None, warnings=None, pos=None):
+    """Gera frames (NetFrame, EventFrame, ClientDataFrame, ConsoleFrame, ...).
+
+    Se `pos` for uma lista, pos[0] recebe o offset (em bytes) do frame atual,
+    o que permite calcular o progresso real da leitura."""
     hdr = hdr or read_header(path)
     with open(path, "rb") as f:
         data = f.read()
@@ -165,6 +168,8 @@ def iter_frames(path, hdr=None, warnings=None):
             continue
         p = start
         while p + 9 <= end:
+            if pos is not None:
+                pos[0] = p
             kind, t, fr = FRAME_HDR.unpack_from(data, p)
             p += 9
             try:

@@ -405,22 +405,44 @@ def detect_speed(dd, cfg):
                                descricao="Relogio do cliente %.2fx mais rapido que o do servidor (janela de 5 s)" % r,
                                gravidade=SUSPEITO))
     frac = flagged / len(windows)
-    # 2a medida: duracao declarada de cada frame (msec) vs intervalo real entre frames gravados
+    # 2a medida: duracao declarada dos comandos (msec) vs tempo real, somada em janelas de 0,5 s.
+    # Frame a frame o msec inteiro distorce a razao em fps muito alto (ex.: 1000+ fps -> falso 1,3x);
+    # cada frame da demo pode carregar varios comandos (delta do outgoing_sequence).
     fr_r = []
+    bursts = []   # (indice, razao) de janelas com rajada de velocidade
+    acc_ms = acc_dt = 0.0
     for i in range(1, len(tl)):
         dt = tl.t[i] - tl.t[i - 1]
-        if 0.0005 < dt < 0.5 and tl.frame[i] != tl.frame[i - 1]:
-            fr_r.append(tl.msec[i] / 1000.0 / dt)
+        if not (0.0005 < dt < 0.5) or tl.frame[i] == tl.frame[i - 1]:
+            acc_ms = acc_dt = 0.0
+            continue
+        dseq = tl.outseq[i] - tl.outseq[i - 1]
+        acc_ms += tl.msec[i] * (dseq if 1 <= dseq <= 10 else 1)
+        acc_dt += dt
+        if acc_dt >= 0.5:
+            r = acc_ms / 1000.0 / acc_dt
+            fr_r.append(r)
+            if r >= 2.5:
+                bursts.append((i, r))
+            acc_ms = acc_dt = 0.0
     fr_r.sort()
+    # rajadas: speedhack ligado por tecla (Furion, Interium...). Calibrado com 211 demos publicas:
+    # limpas no maximo 1,48x numa janela de 0,5 s; cheats 2,9x a 30x.
+    for i, r in bursts[:30]:
+        ev.append(dict(tempo=fmt_time(tl.t[i], t0), tempo_s=round(tl.t[i] - t0, 3), frame=tl.frame[i],
+                       descricao="Rajada de velocidade: comandos somando %.1fx o tempo real em 0,5 s" % r, gravidade=SUSPEITO))
+    max_burst = max((r for _, r in bursts), default=0.0)
     fmed = fr_r[len(fr_r) // 2] if fr_r else 0.0
     ffrac = sum(1 for x in fr_r if x > 1.3) / len(fr_r) if fr_r else 0.0
     if fmed >= 1.5 or ffrac >= 0.3:
         ev.insert(0, dict(tempo=fmt_time(t0, t0), tempo_s=round(t0, 3), frame=tl.frame[0],
                           descricao="Duracao declarada dos frames %.1fx maior que o tempo real (%.0f%% dos frames acima de 1.3x)"
                           % (fmed, ffrac * 100), gravidade=SUSPEITO))
-    if med >= thr or (flagged >= 3 and frac >= 0.05) or fmed >= 1.5 or ffrac >= 0.3:
+    if med >= thr or (flagged >= 3 and frac >= 0.05) or fmed >= 1.5 or ffrac >= 0.3 or len(bursts) >= 2 or max_burst >= 5:
         status = SUSPEITO
-    elif flagged or ffrac >= 0.15:
+    elif bursts:
+        status = ATENCAO
+    elif flagged >= 2 or ffrac >= 0.15:   # um pico isolado de uma janela e tipico de lag (clean_lags_test.dem)
         status = ATENCAO
     else:
         status = OK
@@ -429,8 +451,10 @@ def detect_speed(dd, cfg):
                    % (med, ratios[-1], flagged, len(windows), thr, fmed),
                    dict(janelas=len(windows), janelas_suspeitas=flagged, mediana_razao=round(med, 3),
                         pior_razao=round(ratios[-1], 3), msec_por_tempo_real=round(fmed, 3),
-                        frames_acima_1_3x_percent=round(ffrac * 100, 1)), ev,
-                   "Calibrado com demos publicas: limpas = 1.00; speedhack = 5-6x. Engasgos de rede causam picos isolados.")
+                        frames_acima_1_3x_percent=round(ffrac * 100, 1), rajadas=len(bursts),
+                        maior_rajada=round(max_burst, 2)), ev,
+                   "Calibrado com demos publicas: limpas = 1.00 (rajadas ate 1,48x); speedhack 2,9x a 30x. "
+                   "Engasgos de rede causam picos isolados no relogio do servidor.")
 
 
 # ---------------------------------------------------------------- WALLHACK
@@ -555,12 +579,20 @@ def detect_antiaim(dd, cfg, speeds):
     if not tl.t:
         return _result("Anti-aim / spinbot", SEM_DADOS, "Sem frames.")
     bad_pitch = [i for i in range(len(tl)) if abs(tl.pitch[i]) > 89.5 and abs(wrap180(tl.pitch[i])) > 89.5]
+    # giro continuo acima de 2000 graus/s por 1,5 s+ (giros rapidos de mouse duram ~0,5 s:
+    # demo_bad_positive.dem e sensitivity100.dem, limpas, tinham giros de 30 frames)
     spin = 0
-    run = 0
-    for s in speeds:
-        run = run + 1 if s > 2000 else 0
-        if run == 30:
-            spin += 1
+    run_t = 0.0
+    counted = False
+    for i, s in enumerate(speeds):
+        if s > 2000 and i > 0:
+            run_t += tl.t[i] - tl.t[i - 1]
+            if run_t >= 1.5 and not counted:
+                spin += 1
+                counted = True
+        else:
+            run_t = 0.0
+            counted = False
     ev = []
     if bad_pitch:
         i = bad_pitch[0]
@@ -572,20 +604,38 @@ def detect_antiaim(dd, cfg, speeds):
                    dict(pitch_invalido=len(bad_pitch), giros=spin), ev)
 
 
-def run_all(dd, cfg=None, bsp=None):
+BASE_DETECTORS = 8   # detectores deste modulo; os de detectors_ecd sao somados em detector_count()
+
+
+def detector_count():
+    from .detectors_ecd import ECD_DETECTORS
+    return BASE_DETECTORS + len(ECD_DETECTORS)
+
+
+def run_all(dd, cfg=None, bsp=None, progress=None, span=(0.0, 1.0)):
+    """Executa todos os detectores. `progress(f)` e chamado apos cada detector,
+    com f distribuido linearmente no intervalo `span`."""
     c = dict(DEFAULTS)
     c.update(cfg or {})
     speeds = angular_speeds(dd.timeline)
-    results = [
-        detect_aimbot(dd, c, speeds),
-        detect_triggerbot(dd, c),
-        detect_silent(dd, c),
-        detect_norecoil(dd, c),
-        detect_wallhack(dd, c, bsp),
-        detect_bhop(dd, c),
-        detect_speed(dd, c),
-        detect_antiaim(dd, c, speeds),
+    steps = [
+        lambda: detect_aimbot(dd, c, speeds),
+        lambda: detect_triggerbot(dd, c),
+        lambda: detect_silent(dd, c),
+        lambda: detect_norecoil(dd, c),
+        lambda: detect_wallhack(dd, c, bsp),
+        lambda: detect_bhop(dd, c),
+        lambda: detect_speed(dd, c),
+        lambda: detect_antiaim(dd, c, speeds),
     ]
+    from .detectors_ecd import ECD_DETECTORS   # import tardio: o modulo importa deste
+    steps += [(lambda f=f: f(dd, c)) for f in ECD_DETECTORS]
+    lo, hi = span
+    results = []
+    for k, step in enumerate(steps):
+        results.append(step())
+        if progress:
+            progress(lo + (hi - lo) * (k + 1) / len(steps))
     # Coerencia: evidencias de um detector Normal/Sem dados sao apenas diagnosticas; sem duplicatas.
     for r in results:
         seen = set()

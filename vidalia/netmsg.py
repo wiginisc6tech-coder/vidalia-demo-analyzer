@@ -246,6 +246,10 @@ class NetDecoder:
 
     def _net_event(self, idx, args):
         name = self.st.event_names.get(idx, "")
+        if args is not None and "createsmoke" in name.lower():
+            org = (args.get("origin[0]", 0.0), args.get("origin[1]", 0.0), args.get("origin[2]", 0.0))
+            if any(org):
+                self._emit("fumaca", origem=tuple(float(v) for v in org))
         if args is not None and args.get("entindex"):
             self._emit("evento_rede", indice=idx, nome=name, entidade=int(args.get("entindex", 0)))
 
@@ -495,6 +499,14 @@ class NetDecoder:
     def _um_resethud(self, b):
         self._emit("inicio_round")
 
+    def _um_screenfade(self, b):
+        # duracao e hold em segundos * 4096 (ponto fixo 4.12); flashbang = branco com alfa alto
+        dur = b.u16() / 4096.0; hold = b.u16() / 4096.0; flags = b.u16()
+        r, g, bl, a = b.u8(), b.u8(), b.u8(), b.u8()
+        # flags: 0x1 = FFADE_OUT (escurecendo), 0x2 = FFADE_MODULATE; a flashbang usa FFADE_IN (0)
+        if flags & 0x0003 == 0 and r >= 240 and g >= 240 and bl >= 240 and a >= 200:
+            self._emit("flash", duracao=round(dur, 3), hold=round(hold, 3), alfa=a)
+
     HANDLERS = {
         0: _nop, 1: _nop, 2: _string, 3: _event, 4: _long, 5: _short, 6: _sound, 7: _time,
         8: _print, 9: _stufftext, 10: _setangle, 11: _serverinfo, 12: _lightstyle,
@@ -512,5 +524,5 @@ class NetDecoder:
     USERMSG_HANDLERS = {
         "DeathMsg": _um_deathmsg, "CurWeapon": _um_curweapon, "TeamInfo": _um_teaminfo,
         "ScoreInfo": _um_scoreinfo, "Damage": _um_damage, "TextMsg": _um_textmsg,
-        "ResetHUD": _um_resethud,
+        "ResetHUD": _um_resethud, "ScreenFade": _um_screenfade,
     }
