@@ -96,6 +96,14 @@ Comandos gravados na demo contendo nomes de cheats (ex.: `hpp`, `oxware`) ou ter
 - Nome de cheat → **Suspeito**; termo genérico → **Atenção**. Chat e troca de nome são ignorados.
 - **Ausência não inocenta:** a maioria dos cheats não deixa comandos na demo.
 
+## Chat da partida
+
+A aba **Chat** mostra tudo o que o jogador que gravou a demo recebeu no chat: falas de todos (inclusive mortos e
+espectadores), rádio, trocas de nome e avisos do servidor/admin. Use **Destaques** para ver só as mensagens com
+palavras como *cheat, wh, aim, ban, demo*, e **Buscar** para achar um nome ou assunto.
+- Útil para ver **quando** outros jogadores começaram a desconfiar, se o suspeito **trocou de nome** e o que os admins avisaram.
+- O chat do time adversário só aparece se o servidor o enviar para o gravador. A demo guarda o que **ele** recebeu.
+
 ## Como ir até o momento indicado na demo
 
 Cada evidência traz **tempo (mm:ss)** e **frame**, contados a partir do início da gravação.

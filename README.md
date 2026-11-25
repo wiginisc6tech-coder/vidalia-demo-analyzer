@@ -26,13 +26,15 @@ automaticamente pelo GitHub Actions a partir do código de cada versão (veja `.
 
 ## Como usar
 
-1. Abra o `VidaliaDemoAnalyzer.exe`.
+1. Abra o `VidaliaDemoAnalyzer.exe`. O idioma (Português, English, Español, Русский) pode ser trocado no canto superior direito.
 2. Em **Demo ou pasta**, escolha um arquivo `.dem` ou uma **pasta inteira** de demos.
 3. (Opcional) Em **Mapas**, escolha a pasta `cstrike\maps` do seu CS para a análise de wallhack. Se ficar vazio,
    o Vidalia procura o mapa sozinho ao lado da demo e nas instalações padrão do CS 1.6.
 4. Clique em **Analisar**.
 5. Use os filtros **Mostrar** para ver só *Atenção/Suspeito* ou um detector específico.
 6. Clique em **Abrir relatório completo** para ver o relatório no navegador.
+7. Na aba **Chat**, veja tudo o que foi digitado na partida (jogadores, rádio, admin e servidor), com busca e
+   destaque de mensagens que falam em cheat, wh, ban, demo etc. O botão **Salvar chat** exporta em .txt ou .csv.
 
 Os relatórios são salvos ao lado da demo:
 
@@ -41,6 +43,7 @@ Os relatórios são salvos ao lado da demo:
 | `<demo>_vidalia.html` | Relatório visual com detectores, gráfico da mira, mortes e jogadores |
 | `<demo>_vidalia.json` | Dados técnicos completos |
 | `<demo>_vidalia_evidencias.csv` | Lista de evidências (tempo, frame, descrição), abre no Excel |
+| `<demo>_vidalia_chat.txt` | Chat da partida: jogadores, rádio, trocas de nome e mensagens do servidor/admin |
 | `vidalia_resumo.html` / `.csv` | Resumo de todas as demos, ao analisar uma pasta |
 
 Veja também o **[Guia para administradores](GUIA_ADMINISTRADORES.md)**: como interpretar e conferir os alertas.

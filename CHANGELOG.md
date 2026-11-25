@@ -1,5 +1,15 @@
 # Histórico de versões
 
+## 1.6.0
+- **Idioma da interface:** Português, English, Español e Русский, escolhido no canto superior direito.
+  A troca é imediata (inclusive durante uma análise) e fica salva; na primeira vez usa o idioma do Windows.
+  As descrições detalhadas das evidências e o relatório HTML continuam em português.
+- **Aba Chat:** todo o chat gravado na demo (geral, time, mortos, espectadores, rádio, trocas de nome e mensagens
+  do servidor/admin/plugins), com filtros, busca e destaque de mensagens com "cheat", "wh", "aim", "ban", "demo"...
+- Chat salvo junto com os relatórios (`<demo>_vidalia_chat.txt`) e incluído no relatório HTML e no JSON.
+- Botão **Salvar chat** (.txt ou .csv para Excel), respeitando o filtro e a busca.
+- Reconhece chat de plugins (VIP, patentes, `*DEAD*`), textos em cirílico (UTF-8 e cp1251) e rádio traduzido.
+
 ## 1.5.0
 - **Calibração com 211 demos reais** (UnrealDemoScanner): demos com cheat marcadas "Suspeito" passaram de 18 para 39;
   demos limpas "Suspeito" de 2 para 0. Veja `CALIBRACAO.md`.
