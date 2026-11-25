@@ -1,5 +1,29 @@
 # Histórico de versões
 
+## 1.5.0
+- **Calibração com 211 demos reais** (UnrealDemoScanner): demos com cheat marcadas "Suspeito" passaram de 18 para 39;
+  demos limpas "Suspeito" de 2 para 0. Veja `CALIBRACAO.md`.
+- **Pontuação 0–100** combinando os detectores por confiabilidade; resumo de pasta agrupado **por jogador**.
+- **Novos detectores:** Aimbot de 1 frame (mira vai ao alvo no tiro e volta) e Autofire (autopistol).
+- **Strafe automático** recalibrado (troca de lado frame a frame): 9 de 11 demos de strafe detectadas, 0 falsos alarmes.
+- **Script de agachamento** recalibrado: 7 de 7 detectadas.
+- **Speedhack:** detecta rajadas (speedhack por tecla) e não gera mais falso alarme em fps muito alto (1000+);
+  um pico isolado de lag não gera mais "Atenção".
+- **Anti-aim:** giro contínuo agora exige 1,5 s (giros rápidos de mouse geravam falso alarme).
+- Mapa `.bsp` localizado automaticamente ao lado da demo e nas instalações padrão do CS 1.6.
+- `python -m vidalia.calibrar`: ferramenta para medir o Vidalia em demos rotuladas.
+- GitHub Actions gera o `.exe` (com SHA-256) a cada versão.
+
+### Mudanças anteriores ainda não publicadas
+- **6 novos detectores** cobrindo funções dos multihacks de CS 1.6 detectados pelo ECD (HPP, Alternative, Furion,
+  Oxware, Evol, Midnight...): **Strafe automático**, **Script de agachamento (SGS/DDRun)**, **Fake lag**, **No flash**,
+  **No smoke** e **Assinaturas de cheat no console**. Experimentais. Veja `CHEATS_ECD.md`.
+- Leitor de demos: movimento lateral/frontal do usercmd, mensagem `ScreenFade` (flashbang) e evento `createsmoke`.
+- **Interface:** porcentagem exibida ao lado da barra de progresso e na linha de status (com "demo X de N" em análise de pasta).
+- **Interface:** botões **Pausar**, **Retomar** e **Cancelar**. A barra fica laranja enquanto pausada.
+  Ao cancelar, as demos já concluídas e seus relatórios são mantidos; o resumo da pasta não é gerado.
+- Progresso calculado pelos bytes lidos da demo (antes saltava por segmento) e avançando a cada detector.
+
 ## 1.4.2: primeira versão pública
 - Novo nome: **Vidalia Demo Analyzer** (executável `VidaliaDemoAnalyzer.exe`).
 - Licença MIT, README, guia para administradores.

@@ -16,7 +16,8 @@ Baixe a versão mais recente na página **[Releases](../../releases)**:
 - **`VidaliaDemoAnalyzer.exe`**: é só abrir, sem instalar nada.
 - **Código-fonte (.zip)**: para rodar com Python ou conferir o código.
 
-Confira o **SHA-256** e o link do **VirusTotal** publicados em cada versão.
+Confira o **SHA-256** e o link do **VirusTotal** publicados em cada versão. O executável é gerado
+automaticamente pelo GitHub Actions a partir do código de cada versão (veja `.github/workflows/build.yml`).
 
 > **Aviso do Windows/antivírus:** programas novos sem assinatura digital costumam ser bloqueados pelo
 > SmartScreen ("O Windows protegeu o computador"). Clique em **Mais informações → Executar assim mesmo**.
@@ -27,7 +28,8 @@ Confira o **SHA-256** e o link do **VirusTotal** publicados em cada versão.
 
 1. Abra o `VidaliaDemoAnalyzer.exe`.
 2. Em **Demo ou pasta**, escolha um arquivo `.dem` ou uma **pasta inteira** de demos.
-3. (Opcional) Em **Mapas**, escolha a pasta `cstrike\maps` do seu CS: isso habilita a análise de wallhack.
+3. (Opcional) Em **Mapas**, escolha a pasta `cstrike\maps` do seu CS para a análise de wallhack. Se ficar vazio,
+   o Vidalia procura o mapa sozinho ao lado da demo e nas instalações padrão do CS 1.6.
 4. Clique em **Analisar**.
 5. Use os filtros **Mostrar** para ver só *Atenção/Suspeito* ou um detector específico.
 6. Clique em **Abrir relatório completo** para ver o relatório no navegador.
@@ -50,32 +52,45 @@ O Vidalia analisa o **jogador que gravou a demo** (demo POV, gravada com `record
 | Detector | O que procura | Situação |
 |---|---|---|
 | Aimbot | Giro brusco da mira seguido de travamento preciso no alvo antes da kill | Experimental |
+| Aimbot de 1 frame | Mira que vai ao alvo só no frame do tiro e volta no seguinte | Calibrado |
 | Triggerbot | Disparo no mesmo frame em que a mira entra no inimigo | Calibrado |
 | Silent aim | Disparo saindo muito fora da direção da mira | Calibrado |
 | No recoil | Rajadas sem recuo ou com compensação perfeita | Experimental (máx. Atenção) |
 | Wallhack | Mira acompanhando inimigo escondido atrás de parede (requer o `.bsp`) | Experimental (máx. Atenção) |
 | Bunny hop script | Sequências de pulos com timing perfeito de 1 frame | Calibrado |
-| Speedhack | Relógio do cliente mais rápido que o do servidor | Calibrado |
+| Strafe automático | Strafe trocando de lado de um frame para o outro, ou sincronia perfeita com o mouse | Calibrado |
+| Script de agachamento | Ground strafe / SGS / DDRun com timing perfeito | Calibrado |
+| Speedhack | Relógio do cliente mais rápido que o do servidor; rajadas de velocidade | Calibrado |
+| Autofire | Muitos tiros seguidos de pistola no ritmo exato da arma | Calibrado (máx. Atenção) |
 | Anti-aim / spinbot | Ângulos impossíveis e giro contínuo | Básico |
+| Fake lag | Cliente retendo pacotes por 100+ ms com o jogo rodando normalmente | Experimental (máx. Atenção) |
+| No flash | Mira acompanhando inimigos ou abates com a tela totalmente branca | Experimental (máx. Atenção) |
+| No smoke | Mira acompanhando inimigos através do núcleo de uma fumaça | Experimental (máx. Atenção) |
+| Assinaturas no console | Nomes/comandos de cheats (lista baseada no ECD) nos comandos gravados | Básico |
+
+Vários deles cobrem funções dos multihacks de CS 1.6 detectados pelo ECD (HPP, Alternative, Furion,
+Oxware, Evol, Midnight...). Veja **[Cheats do ECD × detectores do Vidalia](CHEATS_ECD.md)**.
+
+**Pontuação (0–100):** combina todos os alertas, dando mais peso aos detectores calibrados.
+40+ vale revisar; 70+ é alta prioridade. Na análise de pasta, o resumo também agrupa **por jogador**.
 
 **Resultados possíveis:** `Normal`, `Atenção` (vale assistir), `Suspeito` (prioridade de revisão), `Sem dados`.
 
-## Precisão atual (versão 1.4)
+## Precisão atual (versão 1.5.0)
 
-Medida com 55 demos públicas, do repositório de testes do [UnrealDemoScanner](https://github.com/UnrealKaraulov/UnrealDemoScanner),
-e partidas reais de jogadores limpos:
+Medida com as **211 demos públicas** do [UnrealDemoScanner](https://github.com/UnrealKaraulov/UnrealDemoScanner):
+134 com cheat (HPP, Furion, Evol, Midnight, Interium...) e 75 limpas, muitas delas testes de situações difíceis.
 
-| | Demos | Marcadas "Suspeito" | Marcadas "Atenção" | Sem alerta |
+| | Demos | Marcadas "Suspeito" | Com algum alerta | Pontuação ≥ 50 |
 |---|---|---|---|---|
-| Com cheat | 28 | 10 | 3 | 15 |
-| Limpas | 27 | **0** | 1 | 26 |
+| Com cheat | 134 | 39 | 53 | 39 |
+| Limpas | 75 | **0** | 8 (só "Atenção") | **0** |
 
-Muitas demos com cheat não detectadas são clipes de poucos segundos ou cheats ainda não cobertos
-(autofire, no spread). **Esses números vêm das mesmas demos usadas para ajustar os detectores**;
-uma validação independente está planejada para a próxima versão.
+A maioria das demos com cheat são clipes curtos de uma única função, por isso muitas não têm o que detectar.
+**Os limiares foram ajustados com essas mesmas demos**, então os números são otimistas. Detalhes, limiares e
+o que *não* dá para detectar pela demo estão em **[CALIBRACAO.md](CALIBRACAO.md)**.
 
-O leitor de demos decodificou **100% dos pacotes de rede** de todas as demos testadas, incluindo uma
-partida real de 29 minutos (158 mil pacotes).
+O leitor de demos decodificou **100% dos pacotes de rede** de todas as demos limpas testadas.
 
 ## Limitações conhecidas
 
@@ -83,7 +98,8 @@ partida real de 29 minutos (158 mil pacotes).
 - Wallhack considera só a geometria sólida do mapa: portas, caixas móveis e fumaça não entram.
 - Cheats modernos e "humanizados" podem não ser detectados.
 - Clipes muito curtos (poucos segundos) não têm dados suficientes.
-- A precisão ainda não foi validada em um conjunto independente de demos.
+- "Perfect silent" (HPP/Furion) não deixa rastro mensurável na demo.
+- A precisão ainda não foi validada em um conjunto independente de demos (veja [CALIBRACAO.md](CALIBRACAO.md)).
 
 ## Privacidade
 
@@ -110,8 +126,17 @@ Para gerar o executável: `Gerar_EXE.bat` (instala o PyInstaller e cria `dist\Vi
 py -m unittest discover tests
 ```
 
-A regressão com demos reais roda definindo `VIDALIA_DEMOS` para uma pasta com `cheat\`, `clean\` e `pro\`
-(lista em `tests/data/demos_publicas.txt`).
+A regressão com demos reais roda definindo `VIDALIA_DEMOS` para a pasta do repositório
+[UnrealDemoScanner](https://github.com/UnrealKaraulov/UnrealDemoScanner) (com `CheatDemos*` e `ClearDemos*`).
+
+### Calibrar com as suas demos
+
+```bat
+py -m vidalia.calibrar C:\demos\cheat C:\demos\limpas --rotulos rotulos.csv --csv metricas.csv
+```
+
+Mostra, por detector, quantas demos com cheat foram detectadas e quantas limpas geraram alarme.
+O formato do `rotulos.csv` está no início de `vidalia/calibrar.py`.
 
 ## Como contribuir
 
