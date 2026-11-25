@@ -1,0 +1,59 @@
+# Gera o VidaliaDemoAnalyzer.exe automaticamente.
+# - A cada push/pull request: roda os testes e gera o .exe como artefato do workflow (aba Actions).
+# - Ao criar uma tag v* (ex.: git tag v1.5.0 && git push --tags): publica o .exe e o SHA-256 em Releases.
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Testes
+        run: python -m unittest discover -s tests -v
+
+      - name: Gerar executavel
+        run: |
+          python -m pip install --upgrade pip pyinstaller
+          python -m PyInstaller --noconfirm --onefile --windowed --name VidaliaDemoAnalyzer `
+            --icon vidalia\assets\vidalia.ico --add-data "vidalia\assets;vidalia\assets" `
+            --collect-submodules vidalia run_vidalia.py
+
+      - name: SHA-256
+        shell: pwsh
+        run: |
+          $h = (Get-FileHash dist\VidaliaDemoAnalyzer.exe -Algorithm SHA256).Hash
+          "$h  VidaliaDemoAnalyzer.exe" | Out-File -Encoding ascii dist\VidaliaDemoAnalyzer.exe.sha256
+          Write-Host "SHA-256: $h"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VidaliaDemoAnalyzer-${{ github.sha }}
+          path: |
+            dist/VidaliaDemoAnalyzer.exe
+            dist/VidaliaDemoAnalyzer.exe.sha256
+
+      - name: Publicar release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/VidaliaDemoAnalyzer.exe
+            dist/VidaliaDemoAnalyzer.exe.sha256
+          body: |
+            Executavel gerado automaticamente pelo GitHub Actions a partir do codigo desta tag.
+            Confira o SHA-256 no arquivo .sha256 antes de distribuir.
