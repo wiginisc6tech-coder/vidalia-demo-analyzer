@@ -67,7 +67,8 @@ def b_string(s):
 
 DESCS = {
     "event_t": [Field("entindex", DT_INTEGER, 11), Field("angles[0]", DT_FLOAT | DT_SIGNED, 26, 8192.0),
-                Field("angles[1]", DT_FLOAT | DT_SIGNED, 26, 8192.0)],
+                Field("angles[1]", DT_FLOAT | DT_SIGNED, 26, 8192.0), Field("origin[0]", DT_FLOAT | DT_SIGNED, 21, 8.0),
+                Field("origin[1]", DT_FLOAT | DT_SIGNED, 21, 8.0), Field("origin[2]", DT_FLOAT | DT_SIGNED, 21, 8.0)],
     "clientdata_t": [Field("origin[0]", DT_FLOAT | DT_SIGNED, 21, 128.0), Field("health", DT_FLOAT | DT_SIGNED, 10)],
     "weapon_data_t": [Field("m_iId", DT_INTEGER, 5), Field("m_iClip", DT_INTEGER | DT_SIGNED, 10)],
     "entity_state_t": [Field("origin[0]", DT_FLOAT | DT_SIGNED, 16, 8.0), Field("origin[1]", DT_FLOAT | DT_SIGNED, 16, 8.0),
@@ -159,7 +160,8 @@ def um(idx, body, variable=False):
     return bytes([idx]) + (bytes([len(body)]) if variable else b"") + body
 
 
-def frame_net(kind, t, fr, angles, view_angles, eye, buttons, onground, punch, msg, msec=10, playernum=0, seq=0):
+def frame_net(kind, t, fr, angles, view_angles, eye, buttons, onground, punch, msg, msec=10, playernum=0, seq=0,
+              fwd=0.0, side=0.0):
     ref = [0.0] * 58
     ref[0:3] = list(eye)
     assert len(ref) == 58
@@ -174,7 +176,7 @@ def frame_net(kind, t, fr, angles, view_angles, eye, buttons, onground, punch, m
     for i in (17, 18, 19, 20, 21, 35, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57):
         ref[i] = int(ref[i])
     info = struct.pack("<f", t) + REF_FMT.pack(*ref)
-    info += USERCMD.pack(0, msec, angles[0], angles[1], 0.0, 0.0, 0.0, 0.0, 0, buttons, 0, 0, 0, 0.0, 0.0, 0.0)
+    info += USERCMD.pack(0, msec, angles[0], angles[1], 0.0, fwd, side, 0.0, 0, buttons, 0, 0, 0, 0.0, 0.0, 0.0)
     info += b"\0" * 132 + b"\0" * 16
     assert len(info) == NETINFO_SIZE
     return struct.pack("<Bfi", kind, t, fr) + info + struct.pack("<7i", seq, seq, 0, 0, seq, 0, 0) + struct.pack("<i", len(msg)) + msg
@@ -301,3 +303,118 @@ def build_bsp(path):
         body += data
     with open(path, "wb") as f:
         f.write(hdr + body)
+
+
+# ------------------------------------------------------------------ cenarios das funcoes de multihack (ECD)
+def msg_event(idx, origin):
+    bw = BitWriter()
+    bw.write(1, 5); bw.write(idx, 10)
+    bw.write(1, 1); bw.write(0, 11)
+    bw.write(1, 1)
+    write_delta(bw, DESCS["event_t"], {"origin[0]": origin[0], "origin[1]": origin[1], "origin[2]": origin[2]})
+    bw.write(0, 1)
+    return bytes([3]) + bw.tobytes()
+
+
+def frame_console(t, fr, cmd):
+    return struct.pack("<Bfi", 3, t, fr) + cmd.encode().ljust(64, b"\0")[:64]
+
+
+def build_ecd_demo(path, strafe=None, duck_script=False, fakelag=False, noflash=False, nosmoke=False, console=False):
+    """60 s a 100 fps. strafe: None (humano), "alt" (troca a cada frame) ou "sync" (sincronia perfeita).
+    Flash (35 s) e fumaca (42 s) acontecem em todas as variantes; so o cheat mira no inimigo durante elas."""
+    me, enemy = 3, 5
+    load = b"".join([
+        msg_serverinfo(me),
+        *[msg_deltadesc(n, d) for n, d in DESCS.items()],
+        msg_userinfo(me, "Suspeito", "STEAM_0:1:111"),
+        msg_userinfo(enemy, "Inimigo", "STEAM_0:0:222"),
+        msg_newusermsg(70, "DeathMsg", 255),
+        msg_newusermsg(71, "TeamInfo", 255),
+        msg_newusermsg(72, "CurWeapon", 3),
+        msg_newusermsg(73, "ScreenFade", 10),
+        msg_resourcelist([(1, "events/ak47.sc"), (3, "events/createsmoke.sc")]),
+        msg_spawnbaseline(),
+    ])
+    seg0 = frame_net(0, 0.0, 0, (0, 0), (0, 0), (0, 0, 0), 0, 1, (0, 0, 0), load, playernum=me - 1) + struct.pack("<Bfi", 5, 0.0, 0)
+    frames = []
+    eye = (0.0, 0.0, 64.0)
+    seq = 0
+    hold = 0
+    lag_side = [0.0] * 6
+    prev_side = 0.0
+    t = 0.0
+    fr = 0
+    for i in range(6000):
+        t = i * 0.01
+        fr += 1
+        ey = 150.0 * math.sin(t * 1.3)
+        epos = (600.0, ey, 47.0)
+        parts = [msg_time(t), msg_clientdata()]
+        if i == 1:
+            parts.append(um(71, bytes([me]) + b_string("TERRORIST"), True))
+            parts.append(um(71, bytes([enemy]) + b_string("CT"), True))
+            parts.append(um(72, bytes([1, 28, 30])))
+        if i % 2 == 0:
+            parts.append(msg_packetentities({enemy: epos}))
+        yaw, pitch, buttons, on, side = 90.0, 0.0, 0, 1, 0.0
+        # 0-20 s: saltos (80 frames: 20 em solo + 60 no ar) com strafe
+        if i < 2000:
+            c = i % 80
+            on = 1 if c < 20 else 0
+            if c == 19:
+                buttons |= IN_JUMP_BIT
+            yaw = 90.0 + 15.0 * math.sin(2 * math.pi * t / 0.4)
+            if not on:
+                dy = yaw - (90.0 + 15.0 * math.sin(2 * math.pi * (t - 0.01) / 0.4))
+                ideal = -400.0 if dy > 0 else 400.0
+                if strafe == "alt":
+                    side = 400.0 if i % 2 else -400.0
+                elif strafe == "sync":
+                    side = ideal
+                else:   # humano: reage ~6 frames depois, solta a tecla as vezes e passa por 0 ao trocar de lado
+                    lag_side.append(ideal if (i // 7) % 5 else 0.0)
+                    side = lag_side.pop(0)
+                    if side and prev_side and (side > 0) != (prev_side > 0):
+                        side = 0.0
+            prev_side = side
+        # 20-30 s: agachamentos
+        elif i < 3000:
+            c = (i - 2000) % (11 if duck_script else 16)
+            on = 1 if c < (1 if duck_script else 6) else 0
+            if c == 0:
+                buttons |= IN_DUCK_BIT
+        # flash total aos 35 s (hold 3 s) e fumaca aos 42 s
+        if i == 3500:
+            parts.append(um(73, struct.pack("<HHH", int(0.5 * 4096), int(3.0 * 4096), 0) + bytes([255, 255, 255, 255])))
+        if i == 4200:
+            parts.append(msg_event(3, (300.0, 0.0, 0.0)))
+        tracking = (noflash and (3500 <= i < 3590 or 3620 <= i < 3750)) or \
+                   (nosmoke and (4400 <= i < 4550 or 4600 <= i < 4750 or 4800 <= i < 4950))
+        if tracking:
+            yaw = math.degrees(math.atan2(ey, 600.0))
+            pitch = 0.0
+        if noflash and i in (3640, 3720):
+            parts.append(um(70, bytes([me, enemy, 1]) + b_string("ak47"), True))
+        # fake lag: segura 14 frames a cada 30
+        if fakelag and i % 30 < 14 and i > 0:
+            hold += 1
+        else:
+            seq += 1
+        frames.append(frame_net(1, t, fr, (pitch, yaw), (pitch, yaw), eye, buttons, on, (0.0, 0.0, 0.0),
+                                b"".join(parts), playernum=me - 1, seq=seq, side=side))
+        if i == 100:
+            frames.append(frame_console(t, fr, "hpp_menu" if console else "weapon_ak47"))
+    seg1 = b"".join(frames) + struct.pack("<Bfi", 5, t, fr)
+    off0 = 544
+    off1 = off0 + len(seg0)
+    dir_off = off1 + len(seg1)
+    hdr = b"HLDEMO\0\0" + struct.pack("<ii", 5, 48) + b"de_teste".ljust(260, b"\0") + b"cstrike".ljust(260, b"\0") + struct.pack("<Ii", 0, dir_off)
+    d = struct.pack("<i", 2)
+    d += struct.pack("<i64siifiii", 0, b"LOADING", 0, 0, 0.0, 1, off0, len(seg0))
+    d += struct.pack("<i64siifiii", 1, b"Playback", 0, 0, t, fr, off1, len(seg1))
+    with open(path, "wb") as f:
+        f.write(hdr + seg0 + seg1 + d)
+
+
+IN_JUMP_BIT, IN_DUCK_BIT = 2, 4

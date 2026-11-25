@@ -58,6 +58,17 @@ class TestRealData(unittest.TestCase):
         self.assertEqual((o.bits, o.pre), (24, 32.0))
 
 
+class ByPrefix(dict):
+    """Busca o detector pelo inicio do nome (ex.: det["Bunny"])."""
+
+    def __missing__(self, key):
+        hits = [v for k, v in self.items() if k.startswith(key + " (")] or \
+               [v for k, v in self.items() if k.startswith(key)]
+        if len(hits) != 1:
+            raise KeyError(key)
+        return hits[0]
+
+
 class TestSynthetic(unittest.TestCase):
     def run_demo(self, **kw):
         tmp = tempfile.mkdtemp()
@@ -65,7 +76,7 @@ class TestSynthetic(unittest.TestCase):
         kills = synth.build_demo(p, **kw)
         rep = analyze(p)
         save_json(rep, p + ".json"); save_csv(rep, p + ".csv"); save_html(rep, p + ".html")
-        return rep, kills, {r["detector"].split(" ")[0]: r for r in rep["detectores"]}
+        return rep, kills, ByPrefix({r["detector"]: r for r in rep["detectores"]})
 
     def test_cheater(self):
         rep, kills, det = self.run_demo(aimbot=True, bhop_script=True, silent=True, norecoil=True)
@@ -75,7 +86,7 @@ class TestSynthetic(unittest.TestCase):
         self.assertEqual(det["Aimbot"]["status"], "Suspeito")
         self.assertEqual(det["Bunny"]["status"], "Suspeito")
         self.assertEqual(det["Silent"]["status"], "Suspeito")
-        self.assertIn(det["No"]["status"], ("Atencao", "Suspeito"))
+        self.assertIn(det["No recoil"]["status"], ("Atencao", "Suspeito"))
         self.assertEqual(rep["veredito"], "Suspeito")
 
     def test_clean(self):
@@ -84,6 +95,92 @@ class TestSynthetic(unittest.TestCase):
         for k in ("Aimbot", "Bunny", "Silent", "Speedhack", "Anti-aim"):
             self.assertIn(det[k]["status"], ("Normal", "Sem dados"), (k, det[k]))
 
+
+
+class TestECD(unittest.TestCase):
+    """Funcoes de multihacks listadas pelo ECD (strafe, agachamento, fake lag, no flash, no smoke, console)."""
+    NEW = ("Strafe automatico", "Script de agachamento", "Fake lag", "No flash", "No smoke", "Assinaturas de cheat")
+
+    def run_demo(self, **kw):
+        p = os.path.join(tempfile.mkdtemp(), "ecd.dem")
+        synth.build_ecd_demo(p, **kw)
+        rep = analyze(p)
+        self.assertEqual(rep["decodificacao"]["cobertura_rede"], 100.0, rep["decodificacao"]["erros"])
+        return ByPrefix({r["detector"]: r for r in rep["detectores"]})
+
+    def test_clean(self):
+        det = self.run_demo()
+        for k in self.NEW:
+            self.assertEqual(det[k]["status"], "Normal", (k, det[k]["resumo"]))
+
+    def test_silent_strafe(self):
+        self.assertEqual(self.run_demo(strafe="alt")["Strafe automatico"]["status"], "Suspeito")
+
+    def test_cheats(self):
+        det = self.run_demo(strafe="sync", duck_script=True, fakelag=True, noflash=True, nosmoke=True, console=True)
+        self.assertEqual(det["Strafe automatico"]["status"], "Suspeito")   # sincronia perfeita troca de lado sem frame neutro
+        self.assertEqual(det["Script de agachamento"]["status"], "Suspeito")   # calibrado com demos reais
+        for k in ("Fake lag", "No flash", "No smoke"):
+            self.assertEqual(det[k]["status"], "Atencao", (k, det[k]["resumo"]))   # experimentais: no maximo Atencao
+        self.assertEqual(det["Assinaturas de cheat"]["status"], "Suspeito")
+        self.assertEqual(det["Assinaturas de cheat"]["metricas"]["termos"], ["hpp"])
+
+    def test_old_synthetic_stays_clean(self):
+        p = os.path.join(tempfile.mkdtemp(), "c.dem")
+        synth.build_demo(p, aimbot=False, bhop_script=False, duplicate=True)
+        det = ByPrefix({r["detector"]: r for r in analyze(p)["detectores"]})
+        for k in self.NEW:
+            self.assertIn(det[k]["status"], ("Normal", "Sem dados"), (k, det[k]["resumo"]))
+
+
+class TestControl(unittest.TestCase):
+    """Progresso continuo e controle de pausar/retomar/cancelar."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.dem = os.path.join(self.tmp, "c.dem")
+        synth.build_demo(self.dem)
+
+    def test_progress_monotonic(self):
+        vals = []
+        analyze(self.dem, progress=vals.append)
+        self.assertGreater(len(vals), 5)
+        self.assertEqual(vals, sorted(vals))
+        self.assertEqual(vals[-1], 1.0)
+        self.assertTrue(all(0.0 <= v <= 1.0 for v in vals))
+
+    def test_pause_resume_cancel(self):
+        import threading
+        import time
+        from vidalia.control import AnalysisControl, Cancelled
+        c = AnalysisControl()
+        c.pause()
+        out = []
+
+        def worker():
+            try:
+                c.checkpoint()
+                out.append("ok")
+            except Cancelled:
+                out.append("cancelado")
+        t = threading.Thread(target=worker)
+        t.start()
+        time.sleep(0.3)
+        self.assertEqual(out, [])          # bloqueado enquanto pausado
+        c.cancel()                         # cancelar libera a pausa
+        t.join(2)
+        self.assertEqual(out, ["cancelado"])
+
+    def test_cancel_during_analysis(self):
+        from vidalia.control import AnalysisControl, Cancelled
+        c = AnalysisControl()
+
+        def prog(f):
+            if f > 0.3:
+                c.cancel()
+            c.checkpoint()
+        with self.assertRaises(Cancelled):
+            analyze(self.dem, progress=prog)
 
 if __name__ == "__main__":
     unittest.main()
@@ -125,7 +222,19 @@ class TestBSP(unittest.TestCase):
         self.assertNotEqual(wh["status"], "Sem dados", wh)
 
 
-PUBLIC = os.environ.get("VIDALIA_DEMOS")  # pasta com cheat/ e clean/ (demos publicas do UnrealDemoScanner)
+PUBLIC = os.environ.get("VIDALIA_DEMOS")  # repositorio UnrealDemoScanner (CheatDemos*/ClearDemos*) ou pastas cheat/ e clean/
+
+
+def _public(rel):
+    """Aceita o layout antigo (cheat/x.dem) e o do repositorio UnrealDemoScanner (CheatDemos*/x.dem)."""
+    import glob
+    p = os.path.join(PUBLIC, rel)
+    if os.path.exists(p):
+        return p
+    kind, name = rel.split("/", 1)
+    pats = {"cheat": "Cheat*", "clean": "Clear*", "pro": "Clear*"}[kind]
+    hits = glob.glob(os.path.join(PUBLIC, pats, name))
+    return hits[0] if hits else p
 
 
 @unittest.skipUnless(PUBLIC and os.path.isdir(PUBLIC or ""), "defina VIDALIA_DEMOS para rodar a regressao com demos reais")
@@ -136,16 +245,23 @@ class TestPublicDemos(unittest.TestCase):
         "cheat/testbhop.dem": ("Bunny", "Suspeito"),
         "cheat/hpp_bhop2.dem": ("Bunny", "Suspeito"),
         "cheat/aim_type_4.dem": ("Silent", "Suspeito"),
+        "cheat/strafe_hpp.dem": ("Strafe automatico", "Suspeito"),
+        "cheat/midnight_strafehelper.dem": ("Strafe automatico", "Suspeito"),
+        "cheat/hpp_gstrafe.dem": ("Script de agachamento", "Suspeito"),
+        "cheat/furion_speed1.dem": ("Speedhack", "Suspeito"),
+        "cheat/HPP_ALL_FEATURES.dem": ("Aimbot de 1 frame", "Suspeito"),
     }
 
     def test_cheats_detected(self):
         for f, (det, want) in self.EXPECT.items():
-            r = {d["detector"].split(" ")[0]: d for d in analyze(os.path.join(PUBLIC, f))["detectores"]}
+            r = ByPrefix({d["detector"]: d for d in analyze(_public(f))["detectores"]})
             self.assertEqual(r[det]["status"], want, (f, r[det]))
 
     def test_clean_not_suspect(self):
         import glob
-        for f in glob.glob(os.path.join(PUBLIC, "clean", "*.dem")) + glob.glob(os.path.join(PUBLIC, "pro", "*.dem")):
+        files = (glob.glob(os.path.join(PUBLIC, "clean", "*.dem")) + glob.glob(os.path.join(PUBLIC, "pro", "*.dem"))
+                 + glob.glob(os.path.join(PUBLIC, "Clear*", "*.dem")) + glob.glob(os.path.join(PUBLIC, "FalsePositive", "*.dem")))
+        for f in files:
             rep = analyze(f)
             self.assertEqual(rep["decodificacao"]["cobertura_rede"], 100.0, f)
             for d in rep["detectores"]:
