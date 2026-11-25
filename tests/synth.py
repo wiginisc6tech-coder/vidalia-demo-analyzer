@@ -333,6 +333,8 @@ def build_ecd_demo(path, strafe=None, duck_script=False, fakelag=False, noflash=
         msg_newusermsg(71, "TeamInfo", 255),
         msg_newusermsg(72, "CurWeapon", 3),
         msg_newusermsg(73, "ScreenFade", 10),
+        msg_newusermsg(74, "SayText", 255),
+        msg_newusermsg(75, "TextMsg", 255),
         msg_resourcelist([(1, "events/ak47.sc"), (3, "events/createsmoke.sc")]),
         msg_spawnbaseline(),
     ])
@@ -357,6 +359,14 @@ def build_ecd_demo(path, strafe=None, duck_script=False, fakelag=False, noflash=
             parts.append(um(72, bytes([1, 28, 30])))
         if i % 2 == 0:
             parts.append(msg_packetentities({enemy: epos}))
+        if i == 200:   # chat padrao do CS, chat de plugin com cor, mensagem de admin e radio
+            parts.append(um(74, bytes([enemy]) + b_string("#Cstrike_Chat_All") + b_string("") + b_string("esse cara ta de wh"), True))
+        if i == 300:
+            parts.append(um(74, bytes([me]) + b_string("\x04[VIP] \x03Suspeito\x01 : boa tarde"), True))
+        if i == 400:
+            parts.append(um(75, bytes([3]) + b_string("ADMIN: grava a demo ai"), True))
+        if i == 500:
+            parts.append(um(75, bytes([5]) + b_string("#Game_radio") + b_string("Inimigo") + b_string("#Fire_in_the_hole"), True))
         yaw, pitch, buttons, on, side = 90.0, 0.0, 0, 1, 0.0
         # 0-20 s: saltos (80 frames: 20 em solo + 60 no ar) com strafe
         if i < 2000:

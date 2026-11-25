@@ -125,12 +125,56 @@ class TestECD(unittest.TestCase):
         self.assertEqual(det["Assinaturas de cheat"]["status"], "Suspeito")
         self.assertEqual(det["Assinaturas de cheat"]["metricas"]["termos"], ["hpp"])
 
+    def test_chat(self):
+        p = os.path.join(tempfile.mkdtemp(), "chat.dem")
+        synth.build_ecd_demo(p)
+        rep = analyze(p)
+        chat = [(c["tipo"], c["jogador"], c["texto"], c["destaque"]) for c in rep["chat"]]
+        self.assertIn(("Todos", "Inimigo", "esse cara ta de wh", True), chat)
+        self.assertIn(("Todos", "Suspeito", "boa tarde", False), chat)
+        self.assertIn(("Servidor/Admin", "", "ADMIN: grava a demo ai", False), chat)
+        self.assertIn(("Radio", "Inimigo", "Granada!", False), chat)
+        from vidalia.report import save_chat_txt
+        save_chat_txt(rep, p + ".txt")
+        with open(p + ".txt", encoding="utf-8-sig") as f:
+            self.assertIn("Inimigo: esse cara ta de wh", f.read())
+
     def test_old_synthetic_stays_clean(self):
         p = os.path.join(tempfile.mkdtemp(), "c.dem")
         synth.build_demo(p, aimbot=False, bhop_script=False, duplicate=True)
         det = ByPrefix({r["detector"]: r for r in analyze(p)["detectores"]})
         for k in self.NEW:
             self.assertIn(det[k]["status"], ("Normal", "Sem dados"), (k, det[k]["resumo"]))
+
+
+class TestI18n(unittest.TestCase):
+    def test_all_languages_complete(self):
+        from vidalia import i18n
+        keys = set(i18n.S["pt"])
+        for code, _ in i18n.LANGS:
+            self.assertEqual(set(i18n.S[code]), keys, code)
+            self.assertEqual(len(i18n.S[code]["filters"]), 3, code)
+            self.assertEqual(len(i18n.S[code]["chat_filters"]), 5, code)
+            self.assertEqual(set(i18n.STATUS[code]), set(i18n.STATUS["pt"]), code)
+            self.assertEqual(set(i18n.CHAT_TYPES[code]), set(i18n.CHAT_TYPES["pt"]), code)
+            i18n.set_lang(code)
+            # formatos com os argumentos usados pela interface
+            i18n.T("verdict_single") % ("X", 50, "y", "nome", 1, 2, "de_dust2")
+            i18n.T("cancelled") % ("50%", 1, 2)
+            i18n.T("analyzing_n") % (1, 2, "a.dem")
+        i18n.set_lang("pt")
+
+    def test_detector_names_translated(self):
+        from vidalia import i18n
+        from vidalia.report import analyze
+        p = os.path.join(tempfile.mkdtemp(), "t.dem")
+        synth.build_demo(p)
+        names = [r["detector"] for r in analyze(p)["detectores"]]
+        for code in ("en", "es", "ru"):
+            i18n.set_lang(code)
+            for n in names:   # todo detector tem nome proprio no idioma (nenhum cai no nome em portugues)
+                self.assertIn(i18n.detector(n), i18n.DETECTORS[code].values(), (code, n))
+        i18n.set_lang("pt")
 
 
 class TestControl(unittest.TestCase):
