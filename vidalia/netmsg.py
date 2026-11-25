@@ -54,6 +54,47 @@ def parse_userinfo(s):
     return {parts[i]: parts[i + 1] for i in range(0, len(parts) - 1, 2)}
 
 
+# ------------------------------------------------------------------ chat
+CHAT_FORMATS = {
+    "#Cstrike_Chat_All": "todos", "#Cstrike_Chat_AllDead": "morto", "#Cstrike_Chat_AllSpec": "espectador",
+    "#Cstrike_Chat_T": "time", "#Cstrike_Chat_CT": "time", "#Cstrike_Chat_T_Dead": "morto",
+    "#Cstrike_Chat_CT_Dead": "morto", "#Cstrike_Chat_Spec": "espectador",
+}
+RADIO = {
+    "#Cover_me": "Me dê cobertura!", "#You_take_the_point": "Assuma a frente.", "#Hold_this_position": "Segure essa posição.",
+    "#Regroup_team": "Reagrupar, time.", "#Follow_me": "Siga-me.", "#Taking_fire": "Estou sob fogo, preciso de ajuda!",
+    "#Go_go_go": "Vai, vai, vai!", "#Team_fall_back": "Time, recuar!", "#Stick_together_team": "Fiquem juntos, time.",
+    "#Get_in_position_and_wait": "Posicionem-se e aguardem.", "#Storm_the_front": "Avançar pela frente!",
+    "#Report_in_team": "Time, reportem.", "#Affirmative": "Afirmativo.", "#Roger_that": "Entendido.",
+    "#Enemy_spotted": "Inimigo avistado.", "#Need_backup": "Preciso de reforço.", "#Sector_clear": "Setor limpo.",
+    "#In_position": "Em posição.", "#Reporting_in": "Reportando.", "#Get_out_of_there": "Saiam daí, vai explodir!",
+    "#Negative": "Negativo.", "#Enemy_down": "Inimigo abatido.", "#Fire_in_the_hole": "Granada!",
+}
+GAME_MSGS = {
+    "#Game_teammate_attack": "Atacou um companheiro de time", "#Killed_Teammate": "Matou um companheiro de time!",
+    "#Game_join_terrorist": "Entrou nos Terroristas", "#Game_join_ct": "Entrou nos Contra-Terroristas",
+    "#Game_scoring": "Placar", "#Game_connected": "Conectou", "#Game_disconnected": "Desconectou",
+    "#Cannot_Be_Spectator": "Não pode ser espectador",
+}
+
+
+def _chat_str(b):
+    """String terminada em zero; tenta UTF-8 e cai para cp1251 (servidores russos antigos)."""
+    i = b.data.find(b"\0", b.pos, b.end)
+    raw = b.data[b.pos:(i if i >= 0 else b.end)]
+    b.pos = (i + 1) if i >= 0 else b.end
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("cp1251", "replace")
+
+
+def _clean(s):
+    """Remove codigos de cor (\\x01-\\x04), quebras de linha e espacos extras."""
+    s = "".join(ch for ch in s if ch >= " " or ch == "\t")
+    return " ".join(s.split())
+
+
 class GameState:
     def __init__(self):
         self.maxclients = 32
@@ -491,10 +532,91 @@ class NetDecoder:
         self._emit("dano_recebido", dano=dmg, armadura=armor)
 
     def _um_textmsg(self, b):
-        b.u8()
-        s = b.string()
+        dest = b.u8()
+        s = _chat_str(b)
         if s.startswith("#") and ("Win" in s or "Round_Draw" in s or "Game_Commencing" in s or "Restart" in s):
             self._emit("fim_round", texto=s)
+        params = []
+        while b.remaining() > 0 and len(params) < 4:
+            params.append(_chat_str(b))
+        if s == "#Game_radio" and len(params) >= 2:      # radio: (nome) "#Fire_in_the_hole"
+            self._emit("chat", categoria="radio", remetente=0, nome=_clean(params[0]),
+                       texto=RADIO.get(params[1], params[1].lstrip("#").replace("_", " ")))
+        elif dest == 3 and s:                             # HUD_PRINTTALK: mensagens de chat do servidor/admin/plugins
+            if s.startswith("#"):
+                txt = GAME_MSGS.get(s, s.lstrip("#").replace("_", " "))
+                if params:
+                    txt += " (" + ", ".join(_clean(x) for x in params if x) + ")"
+                self._emit("chat", categoria="jogo", remetente=0, nome="", texto=txt)
+            else:
+                txt = _clean(s)
+                for k, v in enumerate(params, 1):
+                    txt = txt.replace("%%s%d" % k, _clean(v))
+                self._emit("chat", categoria="servidor", remetente=0, nome="", texto=txt)
+
+    def _um_saytext(self, b):
+        sender = b.u8()
+        fmt = _chat_str(b)
+        params = []
+        while b.remaining() > 0 and len(params) < 3:
+            params.append(_chat_str(b))
+        p = self.st.players.get(sender) or {}
+        nome = p.get("nome", "")
+        if fmt.startswith("#Cstrike_Name_Change") and len(params) >= 2:
+            self._emit("chat", categoria="nome", remetente=sender, nome=_clean(params[0]),
+                       texto="mudou o nome para %s" % _clean(params[1]))
+            return
+        if fmt.startswith("#Cstrike_Chat"):
+            cat = CHAT_FORMATS.get(fmt, "todos")
+            msg = params[1] if len(params) >= 2 else (params[0] if params else "")
+            if len(params) >= 2 and params[0]:
+                nome = _clean(params[0]) or nome
+            self._emit("chat", categoria=cat, remetente=sender, nome=nome, texto=_clean(msg))
+            return
+        if fmt.startswith("#"):
+            return   # textos internos do HUD (ex.: #Spec_PlayerItem)
+        # formato livre (plugins AMXX / ColorChat): "[VIP][Patente] Nome : mensagem", radio ou anuncio do servidor
+        txt = _clean(fmt)
+        low = txt.lower()
+        for mark in ("(radio)", "(\u0440\u0430\u0434\u0438\u043e)"):
+            k = low.find(mark)
+            if k >= 0:
+                body = txt[k + len(mark):].lstrip(" :")
+                self._emit("chat", categoria="radio", remetente=0, nome=txt[:k].strip(), texto=body or txt)
+                return
+        nm = _clean(nome)
+        idx = txt.find(nm) if (sender and nm) else -1
+        rest = txt[idx + len(nm):] if idx >= 0 else ""
+        if not (idx >= 0 and ":" in rest[:40]):
+            # plugins de chat (patentes, VIP...) podem mandar o remetente errado: procura o nome de
+            # qualquer jogador conhecido logo antes do ":" ("[VIP][Patente] Nome : mensagem")
+            sep = txt.find(" : ")
+            sep = sep if sep >= 0 else txt.find(": ")
+            head = txt[:sep] if sep > 0 else ""
+            best = None
+            for num, pl in self.st.players.items():
+                cand = _clean(pl.get("nome", ""))
+                if len(cand) >= 2 and head.endswith(cand) and (best is None or len(cand) > len(best[1])):
+                    best = (num, cand)
+            if best:
+                sender, nm = best
+                idx = len(head) - len(nm)
+                rest = txt[idx + len(nm):]
+        if idx >= 0 and ":" in rest[:40]:
+            prefix = txt[:idx].lower()
+            msg = rest.split(":", 1)[1].strip()
+            if any(k in prefix for k in ("dead", "\u043c\u0435\u0440\u0442\u0432", "morto", "\u0442\u0440\u0443\u043f")):
+                cat = "morto"
+            elif any(k in prefix for k in ("team", "(t)", "(ct)", "time", "terror", "counter", "\u043a\u043e\u043c\u0430\u043d\u0434",
+                                           "\u0442\u0435\u0440\u0440\u043e\u0440", "\u0441\u043f\u0435\u0446\u043d\u0430\u0437")):
+                cat = "time"
+            elif "spec" in prefix:
+                cat = "espectador"
+            else:
+                cat = "todos"
+            self._emit("chat", categoria=cat, remetente=sender, nome=nm, texto=msg)
+            return
+        self._emit("chat", categoria="servidor", remetente=0, nome="", texto=txt)
 
     def _um_resethud(self, b):
         self._emit("inicio_round")
@@ -524,5 +646,5 @@ class NetDecoder:
     USERMSG_HANDLERS = {
         "DeathMsg": _um_deathmsg, "CurWeapon": _um_curweapon, "TeamInfo": _um_teaminfo,
         "ScoreInfo": _um_scoreinfo, "Damage": _um_damage, "TextMsg": _um_textmsg,
-        "ResetHUD": _um_resethud, "ScreenFade": _um_screenfade,
+        "ResetHUD": _um_resethud, "ScreenFade": _um_screenfade, "SayText": _um_saytext,
     }

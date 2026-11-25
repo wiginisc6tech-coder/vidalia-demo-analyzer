@@ -25,6 +25,43 @@ DETECTOR_TIER = {
 }
 
 
+# palavras que costumam aparecer quando alguem acusa/denuncia cheat ou um admin age (pt, en, es, ru)
+CHAT_FLAGS = ("wh", "wall", "aim", "cheat", "hack", "xit", "xiter", "speed", "bhop", "trigger", "ban", "kick",
+              "demo", "record", "gravar", "grava", "denunc", "report", "admin", "\u0447\u0438\u0442", "\u0432\u0445",
+              "\u0430\u0438\u043c", "\u0431\u0430\u043d", "\u0434\u0435\u043c\u043e", "\u043a\u0438\u043a")
+CHAT_LABELS = {"todos": "Todos", "time": "Time", "morto": "Morto", "espectador": "Espectador", "radio": "Radio",
+               "nome": "Troca de nome", "servidor": "Servidor/Admin", "jogo": "Jogo"}
+
+
+def _flag(text):
+    import re
+    low = text.lower()
+    return any(re.search(r"(?<![a-z\u0430-\u044f])" + re.escape(w), low) for w in CHAT_FLAGS)
+
+
+def build_chat(dd, t0):
+    """Lista do chat da demo: jogadores, radio, mensagens do servidor/admin e trocas de nome."""
+    out = []
+    for e in dd.events:
+        if e["tipo"] != "chat" or not e.get("texto"):
+            continue
+        p = dd.players.get(e.get("remetente")) or {}
+        out.append(dict(tempo=fmt_time(e["tempo"], t0), tempo_s=round(e["tempo"] - t0, 3), categoria=e["categoria"],
+                        tipo=CHAT_LABELS.get(e["categoria"], e["categoria"]), jogador=e.get("nome", ""),
+                        steamid=p.get("steamid", "") if e.get("remetente") else "", texto=e["texto"],
+                        destaque=_flag(e["texto"]) and e["categoria"] not in ("servidor", "jogo")))
+    return out
+
+
+def save_chat_txt(report, path):
+    """Chat em texto simples, uma linha por mensagem."""
+    with open(path, "w", encoding="utf-8-sig") as f:
+        f.write("Chat da demo %s (Vidalia %s)\n\n" % (report["arquivo"], report["versao"]))
+        for c in report.get("chat", []):
+            who = ("%s: " % c["jogador"]) if c["jogador"] else ""
+            f.write("[%s] (%s) %s%s\n" % (c["tempo"], c["tipo"], who, c["texto"]))
+
+
 def score(results):
     """Pontuacao 0-100 combinando os detectores, com o detalhamento de cada contribuicao."""
     keep = 1.0
@@ -107,6 +144,7 @@ def analyze(path, maps_folder=None, cfg=None, progress=None):
                 for k in kills],
         decodificacao=dd.stats,
         mapa_bsp=bsp_note,
+        chat=build_chat(dd, t0),
         avisos=dd.warnings[:50],
     )
     report["_series"] = _series(dd, speeds)
@@ -200,6 +238,10 @@ def save_html(report, path):
         mortes=g["mortes"], hs=g["headshots"], disparos=g["disparos"], cobertura=st.get("cobertura_rede", 0),
         detectores="".join(det), chart=_chart(report["_series"]), killrows=kills or "<tr><td colspan=5>Nenhuma morte decodificada.</td></tr>",
         players=players or "<tr><td colspan=4>Nenhum jogador decodificado.</td></tr>",
+        nchat=len(report.get("chat", [])),
+        chatrows="".join('<tr%s><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (
+            ' style="background:#3b2a08"' if c["destaque"] else "", e(c["tempo"]), e(c["tipo"]), e(c["jogador"]), e(c["texto"]))
+            for c in report.get("chat", [])[:5000]) or "<tr><td colspan=4>Nenhuma mensagem de chat na demo.</td></tr>",
         bsp=e(report.get("mapa_bsp") or "Nao fornecido"),
         avisos="".join("<li>%s</li>" % e(a) for a in report["avisos"]) or "<li>Nenhum</li>",
         erros="".join("<li>%s (%s)</li>" % (e(k), v) for k, v in st.get("erros", {}).items()) or "<li>Nenhum</li>")
@@ -234,6 +276,7 @@ footer{{color:var(--mut);font-size:12px;margin-top:30px}}
 <h2>Detectores</h2>{detectores}
 <h2>Velocidade angular da mira</h2><div class="card">{chart}<p class="warn">Linha azul: graus/s · tracejado: 1500 graus/s · linhas vermelhas: kills do gravador.</p></div>
 <h2>Mortes</h2><div class="card tw"><table><tr><th>Tempo</th><th>Matador</th><th>Vitima</th><th>Arma</th><th></th></tr>{killrows}</table></div>
+<h2>Chat ({nchat} mensagens)</h2><div class="card tw"><p class="warn">Mensagens de jogadores, radio, trocas de nome e avisos do servidor/admin gravados na demo. Linhas destacadas contem palavras como cheat, wh, aim, ban, demo.</p><table><tr><th>Tempo</th><th>Tipo</th><th>Jogador</th><th>Mensagem</th></tr>{chatrows}</table></div>
 <h2>Jogadores</h2><div class="card tw"><table><tr><th>#</th><th>Nome</th><th>SteamID</th><th>Time</th></tr>{players}</table></div>
 <h2>Diagnostico tecnico</h2><div class="card"><p class="warn">Mapa BSP: {bsp}</p><b>Avisos</b><ul class="warn">{avisos}</ul><b>Erros de decodificacao (mensagens)</b><ul class="warn">{erros}</ul></div>
 <footer>Gerado em {gerado} pelo Vidalia Demo Analyzer. Ferramenta de apoio a administradores; nao substitui a analise humana.</footer>

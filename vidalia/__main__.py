@@ -15,7 +15,7 @@ def main(argv=None):
         from .gui import run
         run()
         return 0
-    from .report import analyze, save_batch, save_csv, save_html, save_json
+    from .report import analyze, save_batch, save_chat_txt, save_csv, save_html, save_json
     code = 0
     done = []
     for d in a.demos:
@@ -31,6 +31,7 @@ def main(argv=None):
         save_json(rep, base + ".json")
         save_csv(rep, base + "_evidencias.csv")
         save_html(rep, base + ".html")
+        save_chat_txt(rep, base + "_chat.txt")
         done.append((d, rep))
         print("%s -> %s [%s]" % (d, base + ".html", rep["veredito"]))
         for r in rep["detectores"]:
