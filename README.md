@@ -33,7 +33,16 @@ automaticamente pelo GitHub Actions a partir do código de cada versão (veja `.
 4. Clique em **Analisar**.
 5. Use os filtros **Mostrar** para ver só *Atenção/Suspeito* ou um detector específico.
 6. Clique em **Abrir relatório completo** para ver o relatório no navegador.
-7. Na aba **Chat**, veja tudo o que foi digitado na partida (jogadores, rádio, admin e servidor), com busca e
+7. Na aba **Momentos**, clique em um apontamento para ver o replay do trecho (4 s antes e 2 s depois), que para
+   no frame exato do alerta. Use ←/→ para andar quadro a quadro e **Ampliar** (ou duplo clique) para abrir em uma
+   janela grande. O replay é desenhado com os dados da demo, não é a imagem do jogo. Com o `.bsp` do mapa, ele
+   mostra as paredes e marca os inimigos escondidos atrás delas. Na aba Detectores, um duplo clique em uma
+   evidência leva direto ao momento.
+   Com o CS 1.6 instalado, **Gravar vídeo real** abre o jogo sozinho, grava o trecho e mostra o vídeo de verdade
+   na mesma aba (experimental; o mapa da demo precisa estar instalado). **Ver no jogo** abre o CS já no momento.
+   Depois de gravar, **💾 Exportar MP4...** salva o vídeo no seu PC (normal ou em câmera lenta, com borda vermelha
+   no frame do apontamento). Para isso é preciso o [ffmpeg](https://ffmpeg.org/download.html) (gratuito).
+8. Na aba **Chat**, veja tudo o que foi digitado na partida (jogadores, rádio, admin e servidor), com busca e
    destaque de mensagens que falam em cheat, wh, ban, demo etc. O botão **Salvar chat** exporta em .txt ou .csv.
 
 Os relatórios são salvos ao lado da demo:
