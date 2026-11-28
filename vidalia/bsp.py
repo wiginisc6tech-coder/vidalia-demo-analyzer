@@ -89,3 +89,95 @@ def find_bsp(map_name, folders):
             if os.path.isfile(cand):
                 return cand
     return None
+
+
+# ---------------------------------------------------------------- geometria (replay dos momentos)
+_SKIP_TEX = ("sky", "aaatrigger", "clip", "null", "origin", "hint", "skip", "bevel")
+
+
+class Geometry:
+    """Faces do mundo (modelo 0) para desenhar a cena: poligonos, normais e um indice espacial."""
+    CELL = 512.0
+
+    def __init__(self, polys):
+        self.polys = polys            # lista de (vertices, normal, (zmin, zmax), centro, eh_agua)
+        self.grid = {}
+        for k, p in enumerate(polys):
+            xs = [v[0] for v in p[0]]
+            ys = [v[1] for v in p[0]]
+            for cx in range(int(min(xs) // self.CELL), int(max(xs) // self.CELL) + 1):
+                for cy in range(int(min(ys) // self.CELL), int(max(ys) // self.CELL) + 1):
+                    self.grid.setdefault((cx, cy), []).append(k)
+
+    def near(self, x, y, radius):
+        """Indices das faces que podem estar a ate `radius` unidades de (x, y)."""
+        c = self.CELL
+        out = set()
+        for cx in range(int((x - radius) // c), int((x + radius) // c) + 1):
+            for cy in range(int((y - radius) // c), int((y + radius) // c) + 1):
+                out.update(self.grid.get((cx, cy), ()))
+        return out
+
+
+def load_geometry(path):
+    """Le as faces visiveis do mundo de um BSP v30 (sem ceu, triggers e clips)."""
+    with open(path, "rb") as f:
+        data = f.read()
+    if struct.unpack_from("<i", data, 0)[0] != 30:
+        raise ValueError("BSP nao suportado")
+    lumps = [struct.unpack_from("<ii", data, 4 + 8 * i) for i in range(15)]
+
+    def lump(i):
+        o, l = lumps[i]
+        return data[o:o + l]
+
+    pl = lump(1)
+    planes = [struct.unpack_from("<3f", pl, i) for i in range(0, len(pl) - 19, 20)]
+    vx = lump(3)
+    verts = [struct.unpack_from("<3f", vx, i) for i in range(0, len(vx) - 11, 12)]
+    ed = lump(12)
+    edges = [struct.unpack_from("<HH", ed, i) for i in range(0, len(ed) - 3, 4)]
+    se = lump(13)
+    surf = struct.unpack_from("<%di" % (len(se) // 4), se, 0)
+    ti = lump(6)
+    texinfo = [struct.unpack_from("<i", ti, i + 32)[0] for i in range(0, len(ti) - 39, 40)]
+    tx = lump(2)
+    texnames = []
+    if len(tx) >= 4:
+        nt = struct.unpack_from("<i", tx, 0)[0]
+        for k in range(max(0, nt)):
+            off = struct.unpack_from("<i", tx, 4 + 4 * k)[0]
+            name = b""
+            if 0 <= off <= len(tx) - 16:
+                name = tx[off:off + 16].split(b"\0", 1)[0]
+            texnames.append(name.decode("latin-1").lower())
+    md = lump(14)
+    firstface, numfaces = struct.unpack_from("<ii", md, 56)
+    fc = lump(7)
+    polys = []
+    for k in range(firstface, firstface + numfaces):
+        o = k * 20
+        if o + 20 > len(fc):
+            break
+        plane, side, fe, ne, tinfo = struct.unpack_from("<hhihh", fc, o)
+        tex = ""
+        if 0 <= tinfo < len(texinfo) and 0 <= texinfo[tinfo] < len(texnames):
+            tex = texnames[texinfo[tinfo]]
+        if tex.startswith(_SKIP_TEX):
+            continue
+        vs = []
+        for j in range(fe, fe + ne):
+            s = surf[j]
+            e = edges[abs(s)]
+            vs.append(verts[e[0] if s >= 0 else e[1]])
+        if len(vs) < 3:
+            continue
+        n = planes[plane]
+        if side:
+            n = (-n[0], -n[1], -n[2])
+        zs = [v[2] for v in vs]
+        cx = sum(v[0] for v in vs) / len(vs)
+        cy = sum(v[1] for v in vs) / len(vs)
+        cz = sum(zs) / len(vs)
+        polys.append((tuple(vs), n, (min(zs), max(zs)), (cx, cy, cz), tex.startswith(("!", "*"))))
+    return Geometry(polys)

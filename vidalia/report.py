@@ -8,6 +8,7 @@ import os
 from . import __version__
 from .bsp import BSP, default_map_folders, find_bsp
 from .detectors import LEVEL, SEM_DADOS, OK, ATENCAO, SUSPEITO, fmt_time, run_all
+from .replay import build as build_replay
 from .engine import LOAD_SHARE, load, player_name, weapon_name
 
 
@@ -90,6 +91,7 @@ def analyze(path, maps_folder=None, cfg=None, progress=None):
     dd = load(path, progress)
     bsp = None
     bsp_note = ""
+    bp = None
     map_name = os.path.splitext(os.path.basename(dd.header.map_name))[0]
     auto = not maps_folder
     folders = [maps_folder] if maps_folder else default_map_folders(path)
@@ -148,6 +150,11 @@ def analyze(path, maps_folder=None, cfg=None, progress=None):
         avisos=dd.warnings[:50],
     )
     report["_series"] = _series(dd, speeds)
+    try:
+        report["_replay"] = build_replay(dd, results, t0, bsp_path=bp if bsp else None, map_name=map_name,
+                                         demo_path=os.path.abspath(path))
+    except Exception as e:  # noqa: BLE001  (o replay nunca pode derrubar a analise)
+        report["avisos"].append("Replay dos momentos indisponivel: %s" % e)
     if progress:
         progress(1.0)
     return report

@@ -428,3 +428,73 @@ def build_ecd_demo(path, strafe=None, duck_script=False, fakelag=False, noflash=
 
 
 IN_JUMP_BIT, IN_DUCK_BIT = 2, 4
+
+
+def build_box_bsp(path, boxes):
+    """BSP v30 com caixas solidas alinhadas aos eixos: faces visiveis (para o replay) e arvore de
+    nos/folhas (para a linha de visao). `boxes` = [((x0, y0, z0), (x1, y1, z1)), ...]."""
+    planes = []
+    nodes = []
+    EMPTY, SOLID = 0, 1
+
+    def plane(n, d):
+        planes.append(struct.pack("<4fi", n[0], n[1], n[2], d, 0))
+        return len(planes) - 1
+
+    def tree(bs):
+        # devolve o indice do filho (>= 0 no, < 0 folha)
+        if not bs:
+            return -(EMPTY + 1)
+        (x0, y0, z0), (x1, y1, z1) = bs[0]
+        rest = bs[1:]
+        outside = tree(rest)
+        # cadeia de 6 planos: dentro de todos -> solido
+        tests = [((1, 0, 0), x0), ((-1, 0, 0), -x1), ((0, 1, 0), y0), ((0, -1, 0), -y1),
+                 ((0, 0, 1), z0), ((0, 0, -1), -z1)]
+        child = -(SOLID + 1)
+        for n, d in reversed(tests):
+            # frente (n.p - d >= 0) = lado de dentro deste plano -> continua a cadeia
+            nodes.append((plane(n, d), child, outside))
+            child = len(nodes) - 1
+        return child
+
+    head = tree(list(boxes))
+    if head < 0:
+        nodes.append((plane((1, 0, 0), -99999), head, head))
+        head = len(nodes) - 1
+    node_b = b"".join(struct.pack("<ihh6hHH", p, a, b, 0, 0, 0, 0, 0, 0, 0, 0) for p, a, b in nodes)
+    leafs = struct.pack("<ii6hHH4B", -1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+    leafs += struct.pack("<ii6hHH4B", -2, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+
+    verts, edges, surf, faces = [], [(0, 0)], [], []
+    for (x0, y0, z0), (x1, y1, z1) in boxes:
+        quads = [((1, 0, 0), x1, [(x1, y0, z0), (x1, y1, z0), (x1, y1, z1), (x1, y0, z1)]),
+                 ((-1, 0, 0), -x0, [(x0, y0, z0), (x0, y0, z1), (x0, y1, z1), (x0, y1, z0)]),
+                 ((0, 1, 0), y1, [(x0, y1, z0), (x0, y1, z1), (x1, y1, z1), (x1, y1, z0)]),
+                 ((0, -1, 0), -y0, [(x0, y0, z0), (x1, y0, z0), (x1, y0, z1), (x0, y0, z1)]),
+                 ((0, 0, 1), z1, [(x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)]),
+                 ((0, 0, -1), -z0, [(x0, y0, z0), (x0, y1, z0), (x1, y1, z0), (x1, y0, z0)])]
+        for n, d, q in quads:
+            pi = plane(n, d)
+            first = len(surf)
+            base = len(verts)
+            verts += q
+            for k in range(4):
+                edges.append((base + k, base + (k + 1) % 4))
+                surf.append(len(edges) - 1)
+            faces.append(struct.pack("<hhihh4Bi", pi, 0, first, 4, 0, 0, 0, 0, 0, -1))
+    tex = struct.pack("<ii", 1, 8) + b"wall".ljust(16, b"\0") + b"\0" * 24
+    texinfo = struct.pack("<8f2i", 1, 0, 0, 0, 0, 1, 0, 0, 0, 0)
+    models = struct.pack("<9f4i3i", 0, 0, 0, 0, 0, 0, 0, 0, 0, head, 0, 0, 0, 1, 0, len(faces))
+    lumps = {1: b"".join(planes), 2: tex, 3: b"".join(struct.pack("<3f", *v) for v in verts), 5: node_b,
+             6: texinfo, 7: b"".join(faces), 10: leafs, 12: b"".join(struct.pack("<HH", *e) for e in edges),
+             13: struct.pack("<%di" % len(surf), *surf), 14: models}
+    off = 4 + 15 * 8
+    hdr = struct.pack("<i", 30)
+    body = b""
+    for i in range(15):
+        data = lumps.get(i, b"")
+        hdr += struct.pack("<ii", off + len(body), len(data))
+        body += data
+    with open(path, "wb") as f:
+        f.write(hdr + body)
