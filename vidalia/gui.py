@@ -13,6 +13,9 @@ from . import __version__
 from .control import AnalysisControl, Cancelled
 from .detectors import ATENCAO, OK, SEM_DADOS, SUSPEITO, detector_count
 from .i18n import (LANGS, T, chat_type, detector, get_lang, load_lang, save_lang, score_text, set_lang, status)
+from . import steam
+from .i18n import load_setting, save_setting
+from .replay_view import ReplayViewer
 from .report import analyze, save_batch, save_chat_txt, save_csv, save_html, save_json
 
 # ---------------------------------------------------------------- identidade visual
@@ -201,6 +204,14 @@ class App:
         self.verdict = tk.Label(self.vbox, text="", bg=SURF, fg=FG, font=(F, 13, "bold"), anchor="w",
                                 padx=14, pady=10)
         self.verdict.pack(side="left", fill="x", expand=True)
+        pbar = tk.Frame(self.vbox, bg=SURF)
+        pbar.pack(side="right", padx=(0, 10))
+        self.btn_steam = ttk.Button(pbar, text=T("btn_steam"), style="Ghost.TButton",
+                                    command=lambda: self.open_steam(self._cur_player()))
+        self.btn_steam.pack(side="left")
+        self.btn_ecd = ttk.Button(pbar, text=T("btn_ecd"), style="Ghost.TButton",
+                                  command=lambda: self.open_ecd(self._cur_player()))
+        self.btn_ecd.pack(side="left", padx=(6, 0))
         self.vanchor = tk.Frame(root, bg=BG, height=0)
         self.vanchor.pack(fill="x")
 
@@ -218,12 +229,17 @@ class App:
         self.nb.pack(fill="both", expand=True)
         tab_det = tk.Frame(self.nb, bg=SURF)
         self.tab_chat = tk.Frame(self.nb, bg=SURF)
+        self.tab_mom = tk.Frame(self.nb, bg=SURF)
         self.nb.add(tab_det, text="  %s  " % T("tab_detectors"))
+        self.nb.add(self.tab_mom, text="  %s  " % T("tab_moments"))
         self.nb.add(self.tab_chat, text="  %s  " % T("tab_chat"))
         self._build_chat_tab(self.tab_chat)
+        self._build_moments_tab(self.tab_mom)
+        self.nb.bind("<<NotebookTabChanged>>", lambda e: self._on_tab())
         rh = tk.Frame(tab_det, bg=SURF)
         rh.pack(fill="x", padx=14, pady=(10, 8))
         tk.Label(rh, text=T("results_title"), bg=SURF, fg=FG, font=(F, 12, "bold")).pack(side="left")
+        tk.Label(rh, text=T("dbl_hint"), bg=SURF, fg=MUT, font=(F, 8)).pack(side="left", padx=(12, 0))
         self.cb_det = ttk.Combobox(rh, textvariable=self.f_det, values=[T("all_detectors")], state="readonly",
                                    width=30, style="Dark.TCombobox")
         self.cb_det.pack(side="right")
@@ -254,6 +270,7 @@ class App:
         self.tree.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
         self.tree.bind("<<TreeviewSelect>>", self.on_select)
+        self.tree.bind("<Double-1>", self.on_evidence_dbl)
         self._fill_det_filter()
         if not self.status.get():
             self._say("status_start")
@@ -304,6 +321,8 @@ class App:
         sb = ttk.Scrollbar(body, orient="vertical", command=self.chat_tree.yview, style="Dark.Vertical.TScrollbar")
         self.chat_tree.configure(yscrollcommand=sb.set)
         self.chat_tree.pack(side="left", fill="both", expand=True)
+        self.chat_tree.bind("<Button-3>", self._chat_menu)
+        self.chat_tree.bind("<Button-2>", self._chat_menu)
         sb.pack(side="right", fill="y")
         self.chat_rows = []
 
@@ -363,6 +382,156 @@ class App:
                     pre = ("%s  " % os.path.basename(path)) if len(self.results) > 1 else ""
                     f.write("%s[%s] (%s) %s%s\n" % (pre, c["tempo"], chat_type(c["categoria"]), who, c["texto"]))
         self._say("chat_saved", p)
+
+    # ------------------------------------------------------------ momentos (replay)
+    def _build_moments_tab(self, parent):
+        F = self.F
+        self.mom_idx = getattr(self, "mom_idx", 0)
+        self.mom_f = tk.StringVar(value=T("moments_filters")[self.mom_idx])
+        pw = tk.PanedWindow(parent, orient="horizontal", bg=BORDER, sashwidth=4, bd=0)
+        pw.pack(fill="both", expand=True)
+        left = tk.Frame(pw, bg=SURF)
+        top = tk.Frame(left, bg=SURF)
+        top.pack(fill="x", padx=10, pady=(10, 6))
+        tk.Label(top, text=T("moments_title"), bg=SURF, fg=FG, font=(F, 11, "bold")).pack(anchor="w")
+        cb = ttk.Combobox(top, textvariable=self.mom_f, values=T("moments_filters"), state="readonly", width=26,
+                          style="Dark.TCombobox")
+        cb.pack(anchor="w", pady=(6, 0))
+        cb.bind("<<ComboboxSelected>>", lambda e: (setattr(self, "mom_idx", T("moments_filters").index(self.mom_f.get())),
+                                                   self.render_moments()))
+        body = tk.Frame(left, bg=SURF)
+        body.pack(fill="both", expand=True)
+        self.mom_tree = ttk.Treeview(body, columns=("det", "grav"), show="tree headings", selectmode="browse",
+                                     style="Dark.Treeview", height=8)
+        self.mom_tree.heading("#0", text=T("col_time"), anchor="w")
+        self.mom_tree.heading("det", text=T("col_detector"), anchor="w")
+        self.mom_tree.heading("grav", text=T("col_status"), anchor="w")
+        self.mom_tree.column("#0", width=110, stretch=False)
+        self.mom_tree.column("det", width=170, stretch=True)
+        self.mom_tree.column("grav", width=90, stretch=False)
+        for k, c in COL.items():
+            self.mom_tree.tag_configure(k, foreground=c)
+        self.mom_tree.tag_configure("demo", font=(F, 10, "bold"), foreground=FG)
+        sb = ttk.Scrollbar(body, orient="vertical", command=self.mom_tree.yview, style="Dark.Vertical.TScrollbar")
+        self.mom_tree.configure(yscrollcommand=sb.set)
+        self.mom_tree.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        self.mom_tree.bind("<<TreeviewSelect>>", self.on_moment)
+        self.mom_tree.bind("<Double-1>", lambda e: self.expand_moment())
+        self.viewer = ReplayViewer(pw, F, on_expand=self.expand_moment)
+        self.viewer.bind_keys(self.mom_tree)
+        self.viewer.bind_keys(self.viewer.view)
+        self.viewer.view.bind("<Button-1>", lambda e: self.viewer.view.focus_set())
+        pw.add(left, width=370, minsize=250)
+        pw.add(self.viewer, minsize=420)
+        self._mom_items = {}
+        self._mom_cur = None
+
+    def render_moments(self):
+        if not hasattr(self, "mom_tree"):
+            return
+        keep = self._mom_cur
+        self.mom_tree.delete(*self.mom_tree.get_children())
+        self._mom_items = {}
+        only_susp = self.mom_idx == 1
+        multi = len(self.results) > 1
+        total = 0
+        for path, rep in self.results:
+            rp = rep.get("_replay")
+            if not rp:
+                continue
+            parent = ""
+            ms = [m for m in rp.momentos if not only_susp or m.gravidade == SUSPEITO]
+            if multi and ms:
+                parent = self.mom_tree.insert("", "end", text=os.path.basename(path), values=("", ""),
+                                              tags=("demo",), open=True)
+            for k, m in enumerate(rp.momentos):
+                if only_susp and m.gravidade != SUSPEITO:
+                    continue
+                it = self.mom_tree.insert(parent, "end", text=m.tempo, values=(detector(m.detector), status(m.gravidade)),
+                                          tags=(m.gravidade,))
+                self._mom_items[it] = (path, k)
+                total += 1
+                if keep == (path, k):
+                    self.mom_tree.selection_set(it)
+                    self.mom_tree.see(it)
+        if not total and self.results:
+            self.mom_tree.insert("", "end", text=T("moments_none"), values=("", ""))
+        self.nb.tab(self.tab_mom, text="  %s  " % (T("tab_moments_n") % total if total else T("tab_moments")))
+
+    def _moment(self, key):
+        path, k = key
+        for p, rep in self.results:
+            if p == path and rep.get("_replay"):
+                return rep["_replay"], rep["_replay"].momentos[k]
+        return None, None
+
+    def on_moment(self, _e=None):
+        sel = self.mom_tree.selection()
+        if not sel or sel[0] not in self._mom_items:
+            return
+        key = self._mom_items[sel[0]]
+        if key == self._mom_cur and self.viewer.m is not None:
+            return
+        self._mom_cur = key
+        rp, m = self._moment(key)
+        self.root.config(cursor="watch")
+        self.root.update_idletasks()
+        try:
+            self.viewer.load(rp, m)
+        finally:
+            self.root.config(cursor="")
+
+    def on_evidence_dbl(self, _e):
+        sel = self.tree.selection()
+        info = self._ev_items.get(sel[0]) if sel else None
+        if not info:
+            return
+        path, det, frame, desc = info
+        for p, rep in self.results:
+            rp = rep.get("_replay")
+            if p != path or not rp:
+                continue
+            for k, m in enumerate(rp.momentos):
+                if m.detector == det and m.frame == frame and m.descricao == desc:
+                    if self.mom_idx == 1 and m.gravidade != SUSPEITO:
+                        self.mom_idx = 0
+                        self.mom_f.set(T("moments_filters")[0])
+                        self.render_moments()
+                    self.nb.select(self.tab_mom)
+                    for it, key in self._mom_items.items():
+                        if key == (path, k):
+                            self.mom_tree.selection_set(it)
+                            self.mom_tree.see(it)
+                            self.mom_tree.focus(it)
+                    return
+
+    def _on_tab(self):
+        try:
+            if self.nb.select() != str(self.tab_mom):
+                self.viewer.pause()
+        except (tk.TclError, AttributeError):
+            pass
+
+    def expand_moment(self):
+        if not self.viewer.m:
+            return
+        self.viewer.pause()
+        win = tk.Toplevel(self.root)
+        win.title("Vidalia · %s" % (T("mv_window") % self.viewer.m.tempo))
+        win.configure(bg=SURF)
+        win.geometry("1280x840")
+        v = ReplayViewer(win, self.F, big=True)
+        v.pack(fill="both", expand=True)
+        v.bind_keys(win)
+        v.speed.set(self.viewer.speed.get())
+        win.update_idletasks()
+        v.load(self.viewer.rp, self.viewer.m, autoplay=False)
+        v.k = self.viewer.k
+        v._stopped_at_target = self.viewer._stopped_at_target
+        v.draw()
+        win.protocol("WM_DELETE_WINDOW", lambda: (v.pause(), win.destroy()))
+        win.focus_set()
 
     # ------------------------------------------------------------ estilo
     def _style(self, F):
@@ -486,6 +655,9 @@ class App:
         self.btn_html.configure(state="disabled", text=T("btn_report"))
         self.results = []
         self.last_html = None
+        self._cur_path = None
+        self._mom_cur = None
+        self.viewer.load(None, None)
         self.tree.delete(*self.tree.get_children())
         self.set_verdict("")
         self.render_chat()
@@ -597,6 +769,7 @@ class App:
 
     def _refresh_verdict(self):
         """Faixa de veredito a partir dos resultados (no idioma atual)."""
+        self._update_player_buttons()
         if not self.results:
             self.set_verdict("")
             return
@@ -714,6 +887,7 @@ class App:
     # ------------------------------------------------------------ exibicao
     def render(self):
         self.tree.delete(*self.tree.get_children())
+        self._ev_items = {}
         det = self.det_filter
         min_lvl = {0: -1, 1: 1, 2: 2}[self.sev_idx]
         multi = len(self.results) > 1
@@ -737,13 +911,95 @@ class App:
                     g = e.get("gravidade", "")
                     if LEVEL.get(g, 0) < min_lvl:
                         continue
-                    self.tree.insert(node, "end", text="  %s" % e.get("tempo", ""),
-                                     values=(status(g), e.get("descricao", "")), tags=(g,))
+                    it = self.tree.insert(node, "end", text="  %s" % e.get("tempo", ""),
+                                          values=(status(g), e.get("descricao", "")), tags=(g,))
+                    self._ev_items[it] = (path, r["detector"], e.get("frame"), e.get("descricao"))
 
         self.render_chat()
+        self.render_moments()
+
+    # ------------------------------------------------------------ steam / ECD
+    def _cur_player(self):
+        """(nome, steamid) do gravador da demo atual (a selecionada, ou a unica analisada)."""
+        path = getattr(self, "_cur_path", None)
+        for p, rep in self.results:
+            if path is None or p == path:
+                g = rep.get("gravador") or {}
+                return g.get("nome", ""), g.get("steamid", "")
+        return "", ""
+
+    def _check_sid(self, who):
+        name, sid = who
+        if steam.to_id64(sid) is None:
+            messagebox.showinfo("Vidalia", T("steam_invalid") % (name or "?", sid or "-"))
+            return False
+        return True
+
+    def open_steam(self, who):
+        if self._check_sid(who):
+            webbrowser.open(steam.profile_url(who[1]))
+
+    def open_ecd(self, who):
+        if not self._check_sid(who):
+            return
+        sid2 = steam.to_steam2(who[1])
+        self.root.clipboard_clear()
+        self.root.clipboard_append(sid2)
+        self.root.update()
+        webbrowser.open(steam.ECD_LIST)
+        self._say("ecd_copied", sid2)
+        if not load_setting("ecd_dica_vista"):
+            messagebox.showinfo("Vidalia", T("ecd_tip") % sid2)
+            save_setting("ecd_dica_vista", True)
+
+    def _update_player_buttons(self):
+        name, sid = self._cur_player()
+        ok = steam.to_id64(sid) is not None
+        for b in (getattr(self, "btn_steam", None), getattr(self, "btn_ecd", None)):
+            if b is not None:
+                b.configure(state="normal" if self.results else "disabled")
+        short = (name[:16] + "…") if len(name) > 17 else name
+        try:
+            if not self.results:
+                self.btn_steam.configure(text=T("btn_steam"))
+            elif ok:
+                self.btn_steam.configure(text="%s: %s" % (T("btn_steam"), short) if short else T("btn_steam"))
+            else:
+                self.btn_steam.configure(text="%s (%s)" % (T("btn_steam_na"), short) if short else T("btn_steam_na"))
+        except (tk.TclError, AttributeError):
+            pass
+
+    def _chat_menu(self, e):
+        it = self.chat_tree.identify_row(e.y)
+        if not it:
+            return
+        self.chat_tree.selection_set(it)
+        idx = self.chat_tree.index(it)
+        if idx >= len(self.chat_rows):
+            return
+        c = self.chat_rows[idx][1]
+        who = (c.get("jogador", ""), c.get("steamid", ""))
+        menu = tk.Menu(self.root, tearoff=0, bg=SURF2, fg=FG, activebackground=PURPLE_D, activeforeground="#ffffff")
+        menu.add_command(label="%s  (%s)" % (who[0] or "?", steam.to_steam2(who[1]) or T("steam_none")),
+                         state="disabled")
+        menu.add_separator()
+        menu.add_command(label=T("btn_steam"), command=lambda: self.open_steam(who))
+        menu.add_command(label=T("btn_ecd"), command=lambda: self.open_ecd(who))
+        menu.tk_popup(e.x_root, e.y_root)
 
     def on_select(self, _e):
         sel = self.tree.selection()
+        if sel and sel[0] in getattr(self, "_ev_items", {}):
+            self._cur_path = self._ev_items[sel[0]][0]
+        elif sel:
+            parent = self.tree.parent(sel[0])
+            while parent and not parent.startswith("demo:"):
+                parent = self.tree.parent(parent)
+            if parent:
+                self._cur_path = parent[5:]
+        if sel and sel[0].startswith("demo:"):
+            self._cur_path = sel[0][5:]
+        self._update_player_buttons()
         if sel and sel[0].startswith("demo:"):
             path = sel[0][5:]
             for p, rep in self.results:
